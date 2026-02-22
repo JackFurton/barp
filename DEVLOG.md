@@ -53,6 +53,45 @@ Think: Rust's expressiveness + effect tracking + powerful macros, but starting s
 
 ---
 
+## Session 5 - File I/O, Bug Fixes, and Almost Self-Hosting! (2026-02-22)
+
+**Completed:**
+- [x] Fixed field access (`p.x`) - removed debug prints, works correctly
+- [x] Fixed field assignment (`p.x = 5`) - works correctly
+- [x] Added `read_file(filename)` builtin - uses mmap for 128KB buffer
+- [x] Added `write_file(filename, content, len)` builtin
+- [x] Fixed large stack offset bug - added `emit_ldr_fp`/`emit_str_fp` helpers for offsets > 255
+- [x] Fixed stack allocation bug - increased from 256 to 512 bytes per function
+- [x] Compiler now reads from file and writes assembly to file
+
+**Self-hosting status:**
+The Teddy compiler can now:
+- ✅ Read source files (up to 128KB)
+- ✅ Write assembly output to files
+- ✅ Compile programs with functions, recursion, structs, arrays, strings
+- ✅ Successfully compiles fibonacci, struct programs, etc.
+
+**Blocker for self-hosting:**
+The compiler source uses `&&` and `||` operators, but these aren't implemented in the self-hosted compiler yet. When it tries to compile itself, it hits:
+```teddy
+if c >= 65 && c <= 90 {  // parse error!
+```
+
+**Technical debt documented as GitHub issues:**
+- #1: Fixed 512-byte stack allocation
+- #2: Struct field names must be globally unique
+- #3: Variable shadowing bug in C compiler
+- #4: No bounds checking
+- #5: read_file leaks 128KB per call
+- #6: **Add && and || operators** (blocker!)
+
+**Next steps:**
+- [ ] Implement `&&` and `||` operators (issue #6)
+- [ ] Self-compile the Teddy compiler!
+- [ ] Fix technical debt issues
+
+---
+
 ## Session 4 - Enums, Pattern Matching, and ADTs! (2026-02-22)
 
 **Completed:**
