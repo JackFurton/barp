@@ -57,6 +57,8 @@ fn TOK_EOF() { return 38; }
 fn TOK_ERROR() { return 39; }
 fn TOK_ANDAND() { return 40; }
 fn TOK_OROR() { return 41; }
+fn TOK_ARROW() { return 42; }
+fn TOK_WITH() { return 43; }
 
 // ============ SYMBOL TABLE ============
 // Using peek/poke for dynamic array access
@@ -221,22 +223,29 @@ fn check_keyword(cmp, kw_start, kw_len, rest, kw_type) {
 }
 
 fn ident_type(cmp) {
-    let c = char_at(cmp.cmp_source, cmp.cmp_start);
-    if c == 101 { return check_keyword(cmp, 1, 3, "lse\0", TOK_ELSE()); }
-    if c == 102 {
+    let ident_c = char_at(cmp.cmp_source, cmp.cmp_start);
+    if ident_c == 101 { return check_keyword(cmp, 1, 3, "lse\0", TOK_ELSE()); }
+    if ident_c == 102 {
         if cmp.cmp_current - cmp.cmp_start > 1 {
-            let c2 = char_at(cmp.cmp_source, cmp.cmp_start + 1);
-            if c2 == 97 { return check_keyword(cmp, 2, 3, "lse\0", TOK_FALSE()); }
-            if c2 == 110 { return check_keyword(cmp, 2, 0, "\0", TOK_FN()); }
+            let f_c2 = char_at(cmp.cmp_source, cmp.cmp_start + 1);
+            if f_c2 == 97 { return check_keyword(cmp, 2, 3, "lse\0", TOK_FALSE()); }
+            if f_c2 == 110 { return check_keyword(cmp, 2, 0, "\0", TOK_FN()); }
         }
     }
-    if c == 105 { return check_keyword(cmp, 1, 1, "f\0", TOK_IF()); }
-    if c == 108 { return check_keyword(cmp, 1, 2, "et\0", TOK_LET()); }
-    if c == 112 { return check_keyword(cmp, 1, 4, "rint\0", TOK_PRINT()); }
-    if c == 114 { return check_keyword(cmp, 1, 5, "eturn\0", TOK_RETURN()); }
-    if c == 115 { return check_keyword(cmp, 1, 5, "truct\0", TOK_STRUCT()); }
-    if c == 116 { return check_keyword(cmp, 1, 3, "rue\0", TOK_TRUE()); }
-    if c == 119 { return check_keyword(cmp, 1, 4, "hile\0", TOK_WHILE()); }
+    if ident_c == 105 { return check_keyword(cmp, 1, 1, "f\0", TOK_IF()); }
+    if ident_c == 108 { return check_keyword(cmp, 1, 2, "et\0", TOK_LET()); }
+    if ident_c == 112 { return check_keyword(cmp, 1, 4, "rint\0", TOK_PRINT()); }
+    if ident_c == 114 { return check_keyword(cmp, 1, 5, "eturn\0", TOK_RETURN()); }
+    if ident_c == 115 { return check_keyword(cmp, 1, 5, "truct\0", TOK_STRUCT()); }
+    if ident_c == 116 { return check_keyword(cmp, 1, 3, "rue\0", TOK_TRUE()); }
+    if ident_c == 119 {
+        // 'w' - could be 'while' or 'with'
+        if cmp.cmp_current - cmp.cmp_start > 1 {
+            let w_c2 = char_at(cmp.cmp_source, cmp.cmp_start + 1);
+            if w_c2 == 104 { return check_keyword(cmp, 2, 3, "ile\0", TOK_WHILE()); }
+            if w_c2 == 105 { return check_keyword(cmp, 2, 2, "th\0", TOK_WITH()); }
+        }
+    }
     return TOK_IDENT();
 }
 
@@ -310,7 +319,11 @@ fn next_token(cmp) {
     if c == 46 { make_token(cmp, TOK_DOT()); return 0; }
     if c == 58 { make_token(cmp, TOK_COLON()); return 0; }
     if c == 43 { make_token(cmp, TOK_PLUS()); return 0; }
-    if c == 45 { make_token(cmp, TOK_MINUS()); return 0; }
+    if c == 45 {
+        if lex_match(cmp, 62) { make_token(cmp, TOK_ARROW()); return 0; }
+        make_token(cmp, TOK_MINUS());
+        return 0;
+    }
     if c == 42 { make_token(cmp, TOK_STAR()); return 0; }
     if c == 47 { make_token(cmp, TOK_SLASH()); return 0; }
     if c == 37 { make_token(cmp, TOK_PERCENT()); return 0; }
@@ -1211,10 +1224,16 @@ fn parse_expression(cmp, out, pos) {
 // ============ STATEMENT PARSING ============
 
 // Parse let statement: let name = expr;
+// Parse let statement: let name [: type] = expr;
 fn parse_let(cmp, out, pos) {
     consume(cmp, TOK_IDENT());
     let let_name_start = cmp.cmp_prev_start;
     let let_name_len = cmp.cmp_prev_len;
+    
+    // Optional type annotation: let x: int = ...
+    if match_tok(cmp, TOK_COLON()) {
+        consume(cmp, TOK_IDENT());  // consume type name, ignore for now
+    }
     
     consume(cmp, TOK_EQ());
     pos = parse_expression(cmp, out, pos);
@@ -1543,7 +1562,7 @@ fn parse_statement(cmp, out, pos) {
     return pos;
 }
 
-// Parse function definition: fn name(params) { body }
+// Parse function definition: fn name(params) -> type with effects { body }
 fn parse_function(cmp, out, pos) {
     consume(cmp, TOK_IDENT());
     let fn_name_start = cmp.cmp_prev_start;
@@ -1567,10 +1586,14 @@ fn parse_function(cmp, out, pos) {
     consume(cmp, TOK_LPAREN());
     let fn_param_idx = 0;
     if !check(cmp, TOK_RPAREN()) {
-        // First param
+        // First param: name [: type]
         consume(cmp, TOK_IDENT());
         let fn_pstart = cmp.cmp_prev_start;
         let fn_plen = cmp.cmp_prev_len;
+        // Optional type annotation - parse and ignore for now
+        if match_tok(cmp, TOK_COLON()) {
+            consume(cmp, TOK_IDENT());  // consume type name
+        }
         let fn_poff = sym_add(cmp, fn_pstart, fn_plen);
         pos = emit_str_fp_n(out, pos, fn_param_idx, fn_poff);
         fn_param_idx = fn_param_idx + 1;
@@ -1580,12 +1603,30 @@ fn parse_function(cmp, out, pos) {
             consume(cmp, TOK_IDENT());
             fn_pstart = cmp.cmp_prev_start;
             fn_plen = cmp.cmp_prev_len;
+            // Optional type annotation
+            if match_tok(cmp, TOK_COLON()) {
+                consume(cmp, TOK_IDENT());  // consume type name
+            }
             fn_poff = sym_add(cmp, fn_pstart, fn_plen);
             pos = emit_str_fp_n(out, pos, fn_param_idx, fn_poff);
             fn_param_idx = fn_param_idx + 1;
         }
     }
     consume(cmp, TOK_RPAREN());
+    
+    // Optional return type: -> type
+    if match_tok(cmp, TOK_ARROW()) {
+        consume(cmp, TOK_IDENT());  // consume return type, ignore for now
+    }
+    
+    // Optional effect annotations: with Effect1, Effect2
+    if match_tok(cmp, TOK_WITH()) {
+        consume(cmp, TOK_IDENT());  // first effect
+        while check(cmp, TOK_COMMA()) {
+            next_token(cmp);  // consume ','
+            consume(cmp, TOK_IDENT());  // next effect
+        }
+    }
     
     // Parse body
     pos = parse_block(cmp, out, pos);

@@ -53,6 +53,58 @@ Think: Rust's expressiveness + effect tracking + powerful macros, but starting s
 
 ---
 
+## Session 7 - Type & Effect Annotation Syntax Complete! (2026-02-22)
+
+**Effect annotations now work!** The `with` keyword parsing bug is fixed.
+
+### Bug Fixed:
+
+**Variable shadowing struck again!** The `c2` variable in `ident_type()` was defined twice:
+- Line 230: `let c2 = ...` (for checking 'false'/'fn')
+- Line 244: `let c2 = ...` (for checking 'while'/'with')
+
+Due to Teddy's global symbol table, the second `c2` was shadowed by the first, causing `with` to always be lexed as `TOK_IDENT` instead of `TOK_WITH`.
+
+**Fix:** Renamed variables to unique names:
+- `c` → `ident_c` (first character of identifier)
+- `c2` → `f_c2` (second char in 'f...' branch)
+- `c2` → `w_c2` (second char in 'w...' branch)
+
+### New Syntax Working:
+
+```teddy
+// Parameter type annotations
+fn add(a: int, b: int) -> int { return a + b; }
+
+// Return type annotations
+fn get_value() -> int { return 42; }
+
+// Effect annotations (single)
+fn greet() with IO { print 42; return 0; }
+
+// Effect annotations (multiple)
+fn process() with IO, Alloc { ... }
+
+// Combined
+fn compute(x: int) -> int with Pure { return x * 2; }
+
+// Let type annotations
+let x: int = 5;
+```
+
+### Bootstrap Verified:
+
+```
+Stage 1: C compiler → compiler.teddy → stage1
+Stage 2: stage1 → compiler.teddy → stage2
+Stage 3: stage2 → compiler.teddy → stage3
+Result: diff stage2.s stage3.s → IDENTICAL!
+```
+
+**Note:** Types and effects are currently parsed but ignored. The infrastructure is in place for future type/effect checking.
+
+---
+
 ## Session 6 - FULL SELF-HOSTING ACHIEVED! (2026-02-22)
 
 **THE TEDDY COMPILER CAN NOW COMPILE ITSELF!**
