@@ -385,8 +385,76 @@ fn consume(cmp, tok_type) {
         next_token(cmp);
         return 1;
     }
+    error(cmp, "Unexpected token\0", 16);
+    return 0;
+}
+
+// ============ ERROR REPORTING ============
+
+// Find start of line containing position `err_pos` in source
+fn find_line_start(cmp, err_pos) {
+    let ls_idx = err_pos;
+    while ls_idx > 0 {
+        if char_at(cmp.cmp_source, ls_idx - 1) == 10 {
+            return ls_idx;
+        }
+        ls_idx = ls_idx - 1;
+    }
+    return 0;
+}
+
+// Find end of line (newline or EOF)
+fn find_line_end(cmp, err_pos) {
+    let le_idx = err_pos;
+    while le_idx < cmp.cmp_source_len {
+        if char_at(cmp.cmp_source, le_idx) == 10 {
+            return le_idx;
+        }
+        le_idx = le_idx + 1;
+    }
+    return cmp.cmp_source_len;
+}
+
+// Print N spaces
+fn print_spaces(sp_count) {
+    let sp_i = 0;
+    while sp_i < sp_count {
+        print_char(32);
+        sp_i = sp_i + 1;
+    }
+    return 0;
+}
+
+// Print fancy error with source context
+fn error(cmp, msg_ptr, msg_len) {
+    let err_pos = cmp.cmp_tok_start;
+    let line_start = find_line_start(cmp, err_pos);
+    let line_end = find_line_end(cmp, err_pos);
+    let err_column = err_pos - line_start;
+    
+    // Line 1: "error[line N]: <message>"
+    print_str("error[line \0", 11);
+    print_int_raw(cmp.cmp_line);
+    print_str("]: \0", 3);
+    print_str(msg_ptr, msg_len);
+    print_char(10);
+    
+    // Line 2: "   |"
+    print_str("   |\n\0", 5);
+    
+    // Line 3: "NN | <source line>"
+    print_int_raw(cmp.cmp_line);
+    print_str(" | \0", 3);
+    print_str(cmp.cmp_source + line_start, line_end - line_start);
+    print_char(10);
+    
+    // Line 4: "   |" + spaces + "^"
+    print_str("   | \0", 5);
+    print_spaces(err_column);
+    print_char(94);
+    print_char(10);
+    
     cmp.cmp_had_error = 1;
-    print "Parse error!";
     return 0;
 }
 
@@ -796,8 +864,7 @@ fn parse_primary(cmp, out, pos) {
             // Find struct definition
             let struct_idx = struct_find(cmp, prim_name_start, prim_name_len);
             if struct_idx < 0 {
-                print "Unknown struct";
-                cmp.cmp_had_error = 1;
+                error(cmp, "Unknown struct type\0", 19);
             }
             let field_count = arr_get(cmp.cmp_struct_field_counts, struct_idx);
             
@@ -895,6 +962,21 @@ fn parse_primary(cmp, out, pos) {
             if name_is(cmp.cmp_source, prim_name_start, prim_name_len, "print_char\0", 10) {
                 pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);
                 pos = emit_str(out, pos, "    bl print_char\n", 18);
+                return pos;
+            }
+            
+            // print_str(ptr, len) - output string
+            if name_is(cmp.cmp_source, prim_name_start, prim_name_len, "print_str\0", 9) {
+                pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);  // len
+                pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);  // ptr
+                pos = emit_str(out, pos, "    bl print_str\n", 17);
+                return pos;
+            }
+            
+            // print_int_raw(num) - output integer without newline
+            if name_is(cmp.cmp_source, prim_name_start, prim_name_len, "print_int_raw\0", 13) {
+                pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);
+                pos = emit_str(out, pos, "    bl print_int_raw\n", 21);
                 return pos;
             }
             
@@ -1005,8 +1087,7 @@ fn parse_primary(cmp, out, pos) {
             // Load array base address first
             let arr_var_off = sym_find(cmp, prim_name_start, prim_name_len);
             if arr_var_off == 0 {
-                print "Undefined variable";
-                cmp.cmp_had_error = 1;
+                error(cmp, "Undefined variable\0", 18);
             }
             pos = emit_ldr_fp(out, pos, "x1", arr_var_off);
             pos = emit_str(out, pos, "    str x1, [sp, #-16]!\n", 24);
@@ -1029,8 +1110,7 @@ fn parse_primary(cmp, out, pos) {
         // Variable reference - load from stack
         let var_offset = sym_find(cmp, prim_name_start, prim_name_len);
         if var_offset == 0 {
-            print "Undefined variable";
-            cmp.cmp_had_error = 1;
+            error(cmp, "Undefined variable\0", 18);
         }
         pos = emit_ldr_fp(out, pos, "x0", var_offset);
         
@@ -1042,8 +1122,7 @@ fn parse_primary(cmp, out, pos) {
             let acc_field_len = cmp.cmp_prev_len;
             let acc_foff = field_find(cmp, acc_field_start, acc_field_len);
             if acc_foff < 0 {
-                print "Unknown field";
-                cmp.cmp_had_error = 1;
+                error(cmp, "Unknown struct field\0", 20);
             }
             // x0 has struct pointer, load field at offset
             pos = emit_str(out, pos, "    ldr x0, [x0, #", 18);
@@ -1054,8 +1133,7 @@ fn parse_primary(cmp, out, pos) {
         return pos;
     }
     
-    print "Unexpected token in primary";
-    cmp.cmp_had_error = 1;
+    error(cmp, "Unexpected token\0", 16);
     return pos;
 }
 
@@ -1284,8 +1362,7 @@ fn parse_assign(cmp, out, pos, assign_nm_start, assign_nm_len) {
     
     let assign_var_off = sym_find(cmp, assign_nm_start, assign_nm_len);
     if assign_var_off == 0 {
-        print "Undefined variable in assignment";
-        cmp.cmp_had_error = 1;
+        error(cmp, "Undefined variable\0", 18);
     }
     pos = emit_str_fp(out, pos, "x0", assign_var_off);
     
@@ -1437,8 +1514,7 @@ fn parse_statement(cmp, out, pos) {
             // Load struct pointer first
             let stmt_var_off = sym_find(cmp, stmt_name_start, stmt_name_len);
             if stmt_var_off == 0 {
-                print "Undefined variable";
-                cmp.cmp_had_error = 1;
+                error(cmp, "Undefined variable\0", 18);
             }
             pos = emit_ldr_fp(out, pos, "x1", stmt_var_off);
             
@@ -1583,8 +1659,7 @@ fn parse_statement(cmp, out, pos) {
         
         // Must be an expression, but we already consumed the ident...
         // This is a problem - we'll error for now
-        print "Unexpected identifier in statement";
-        cmp.cmp_had_error = 1;
+        error(cmp, "Unexpected identifier\0", 21);
         return pos;
     }
     
@@ -1730,6 +1805,53 @@ fn emit_runtime(out, pos) {
     pos = emit_str(out, pos, "    mov x8, #64\n", 16);
     pos = emit_str(out, pos, "    svc #0\n", 11);
     pos = emit_str(out, pos, "    mov sp, x29\n", 16);
+    pos = emit_str(out, pos, "    ldp x29, x30, [sp], #16\n", 28);
+    pos = emit_str(out, pos, "    ret\n", 8);
+    
+    // print_int_raw: output integer without newline (in x0)
+    pos = emit_str(out, pos, "\nprint_int_raw:\n", 16);
+    pos = emit_str(out, pos, "    stp x29, x30, [sp, #-16]!\n", 30);
+    pos = emit_str(out, pos, "    mov x29, sp\n", 16);
+    pos = emit_str(out, pos, "    sub sp, sp, #32\n", 20);
+    pos = emit_str(out, pos, "    mov x9, x0\n", 15);
+    pos = emit_str(out, pos, "    mov x10, #0\n", 16);
+    pos = emit_str(out, pos, "    cmp x9, #0\n", 15);
+    pos = emit_str(out, pos, "    b.ge .pir_pos\n", 18);
+    pos = emit_str(out, pos, "    mov x10, #1\n", 16);
+    pos = emit_str(out, pos, "    neg x9, x9\n", 15);
+    pos = emit_str(out, pos, ".pir_pos:\n", 10);
+    pos = emit_str(out, pos, "    mov x11, sp\n", 16);
+    pos = emit_str(out, pos, "    mov x13, #10\n", 17);
+    pos = emit_str(out, pos, ".pir_loop:\n", 11);
+    pos = emit_str(out, pos, "    udiv x14, x9, x13\n", 22);
+    pos = emit_str(out, pos, "    msub x15, x14, x13, x9\n", 27);
+    pos = emit_str(out, pos, "    add x15, x15, #48\n", 22);
+    pos = emit_str(out, pos, "    strb w15, [x11, #-1]!\n", 26);
+    pos = emit_str(out, pos, "    mov x9, x14\n", 16);
+    pos = emit_str(out, pos, "    cbnz x9, .pir_loop\n", 23);
+    pos = emit_str(out, pos, "    cbz x10, .pir_write\n", 24);
+    pos = emit_str(out, pos, "    mov x12, #45\n", 17);
+    pos = emit_str(out, pos, "    strb w12, [x11, #-1]!\n", 26);
+    pos = emit_str(out, pos, ".pir_write:\n", 12);
+    pos = emit_str(out, pos, "    mov x0, #1\n", 15);
+    pos = emit_str(out, pos, "    mov x1, x11\n", 16);
+    pos = emit_str(out, pos, "    mov x2, sp\n", 15);
+    pos = emit_str(out, pos, "    sub x2, x2, x11\n", 20);
+    pos = emit_str(out, pos, "    mov x8, #64\n", 16);
+    pos = emit_str(out, pos, "    svc #0\n", 11);
+    pos = emit_str(out, pos, "    mov sp, x29\n", 16);
+    pos = emit_str(out, pos, "    ldp x29, x30, [sp], #16\n", 28);
+    pos = emit_str(out, pos, "    ret\n", 8);
+    
+    // print_str: output string (x0=ptr, x1=len)
+    pos = emit_str(out, pos, "\nprint_str:\n", 12);
+    pos = emit_str(out, pos, "    stp x29, x30, [sp, #-16]!\n", 30);
+    pos = emit_str(out, pos, "    mov x29, sp\n", 16);
+    pos = emit_str(out, pos, "    mov x2, x1\n", 15);    // len
+    pos = emit_str(out, pos, "    mov x1, x0\n", 15);    // ptr
+    pos = emit_str(out, pos, "    mov x0, #1\n", 15);    // stdout
+    pos = emit_str(out, pos, "    mov x8, #64\n", 16);   // sys_write
+    pos = emit_str(out, pos, "    svc #0\n", 11);
     pos = emit_str(out, pos, "    ldp x29, x30, [sp], #16\n", 28);
     pos = emit_str(out, pos, "    ret\n", 8);
     
@@ -1961,8 +2083,7 @@ fn parse_program(cmp, out, pos) {
             if match_tok(cmp, TOK_STRUCT()) {
                 parse_struct_def(cmp);
             } else {
-                print "Expected fn or struct";
-                cmp.cmp_had_error = 1;
+                error(cmp, "Expected 'fn' or 'struct'\0", 25);
                 return pos;
             }
         }

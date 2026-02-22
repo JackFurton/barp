@@ -1115,36 +1115,76 @@ static void emit_runtime(CodeGen *gen) {
     emit(gen, "ret");
 }
 
+static void emit_print_char(CodeGen *gen) {
+    // print_char: output single character in x0
+    emit_raw(gen, "");
+    emit_raw(gen, "// Runtime: print_char");
+    emit_raw(gen, "print_char:");
+    emit(gen, "stp x29, x30, [sp, #-16]!");
+    emit(gen, "mov x29, sp");
+    emit(gen, "sub sp, sp, #16");
+    emit(gen, "strb w0, [sp]");
+    emit(gen, "mov x0, #1");           // stdout
+    emit(gen, "mov x1, sp");           // buffer
+    emit(gen, "mov x2, #1");           // length
+    emit(gen, "mov x8, #64");          // sys_write
+    emit(gen, "svc #0");
+    emit(gen, "mov sp, x29");
+    emit(gen, "ldp x29, x30, [sp], #16");
+    emit(gen, "ret");
+}
+
 static void emit_print_str(CodeGen *gen) {
-    // print_str: prints string at x0 with length x1, then newline
+    // print_str: prints string at x0 with length x1 (no newline!)
     emit_raw(gen, "");
     emit_raw(gen, "// Runtime: print_str");
     emit_raw(gen, "print_str:");
     emit(gen, "stp x29, x30, [sp, #-16]!");
     emit(gen, "mov x29, sp");
-    
-    // Save string pointer and length
-    emit(gen, "mov x9, x0");           // string ptr
-    emit(gen, "mov x10, x1");          // length
-    
-    // Write the string
+    emit(gen, "mov x2, x1");           // length
+    emit(gen, "mov x1, x0");           // buffer
     emit(gen, "mov x0, #1");           // stdout
-    emit(gen, "mov x1, x9");           // buffer
-    emit(gen, "mov x2, x10");          // length
     emit(gen, "mov x8, #64");          // sys_write
     emit(gen, "svc #0");
-    
-    // Write newline
-    emit(gen, "sub sp, sp, #16");
-    emit(gen, "mov x9, #10");          // newline
-    emit(gen, "strb w9, [sp]");
-    emit(gen, "mov x0, #1");
-    emit(gen, "mov x1, sp");
-    emit(gen, "mov x2, #1");
-    emit(gen, "mov x8, #64");
+    emit(gen, "ldp x29, x30, [sp], #16");
+    emit(gen, "ret");
+}
+
+static void emit_print_int_raw(CodeGen *gen) {
+    // print_int_raw: output integer in x0 without newline
+    emit_raw(gen, "");
+    emit_raw(gen, "// Runtime: print_int_raw");
+    emit_raw(gen, "print_int_raw:");
+    emit(gen, "stp x29, x30, [sp, #-16]!");
+    emit(gen, "mov x29, sp");
+    emit(gen, "sub sp, sp, #32");
+    emit(gen, "mov x9, x0");
+    emit(gen, "mov x10, #0");          // is_negative flag
+    emit(gen, "cmp x9, #0");
+    emit(gen, "b.ge .pir_pos");
+    emit(gen, "mov x10, #1");
+    emit(gen, "neg x9, x9");
+    emit_raw(gen, ".pir_pos:");
+    emit(gen, "mov x11, sp");          // buffer pointer
+    emit(gen, "mov x13, #10");         // divisor
+    emit_raw(gen, ".pir_loop:");
+    emit(gen, "udiv x14, x9, x13");
+    emit(gen, "msub x15, x14, x13, x9");
+    emit(gen, "add x15, x15, #48");    // to ASCII
+    emit(gen, "strb w15, [x11, #-1]!");
+    emit(gen, "mov x9, x14");
+    emit(gen, "cbnz x9, .pir_loop");
+    emit(gen, "cbz x10, .pir_write");
+    emit(gen, "mov x12, #45");         // '-'
+    emit(gen, "strb w12, [x11, #-1]!");
+    emit_raw(gen, ".pir_write:");
+    emit(gen, "mov x0, #1");           // stdout
+    emit(gen, "mov x1, x11");          // buffer
+    emit(gen, "mov x2, sp");
+    emit(gen, "sub x2, x2, x11");      // length
+    emit(gen, "mov x8, #64");          // sys_write
     emit(gen, "svc #0");
-    emit(gen, "add sp, sp, #16");
-    
+    emit(gen, "mov sp, x29");
     emit(gen, "ldp x29, x30, [sp], #16");
     emit(gen, "ret");
 }
@@ -1403,7 +1443,9 @@ void codegen_program(CodeGen *gen, Program *prog) {
     
     // Runtime
     emit_runtime(gen);
+    emit_print_char(gen);
     emit_print_str(gen);
+    emit_print_int_raw(gen);
     emit_file_io(gen);
     emit_alloc_and_strings(gen);
     
