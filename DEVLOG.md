@@ -49,7 +49,59 @@ Think: Rust's expressiveness + effect tracking + powerful macros, but starting s
 
 ---
 
-**Near-term Goal: Self-hosting** - Rewrite the compiler in Teddy itself.
+**Near-term Goal: Self-hosting** - ~~Rewrite the compiler in Teddy itself.~~ **ACHIEVED!**
+
+---
+
+## Session 6 - FULL SELF-HOSTING ACHIEVED! (2026-02-22)
+
+**THE TEDDY COMPILER CAN NOW COMPILE ITSELF!**
+
+This session fixed all remaining bugs preventing self-compilation:
+
+### Bugs Fixed:
+
+1. **Variable shadowing in Teddy compiler** - The Teddy compiler's symbol table is global, so duplicate variable names in different scopes interfere. Fixed by renaming ~50 variables to unique names:
+   - `foff` → `foff_nested`, `foff_final`, `init_foff`
+   - `end_label` → `and_end_lbl`, `or_end_lbl`, `if_end_lbl`, `wh_end_lbl`
+   - `i` → `streq_idx`, `symfind_idx`, `nameis_idx`, etc.
+   - `name_start`/`name_len` → `prim_name_start`, `stmt_name_start`, etc.
+   - `arg_count` → `prim_arg_cnt`, `stmt_arg_cnt`
+
+2. **Missing builtins in parse_statement** - `poke`, `str_copy`, and `write_file` were only recognized in expressions (`let x = poke(...)`) but not in statements (`poke(...);`). Added builtin handling for these.
+
+3. **Stack frame too small** - Functions allocated only 256 bytes but the Compiler struct needs 27*8=216 bytes plus locals. Increased to 512 bytes.
+
+### Bootstrap Verification:
+
+```
+Stage 1: C compiler → compiler.teddy → stage1.s
+Stage 2: stage1 compiler → compiler.teddy → stage2.s
+Result: diff stage1.s stage2.s → IDENTICAL!
+```
+
+The Teddy compiler is **fully self-hosting**!
+
+### How to use:
+
+```bash
+# Build the compiler (using C implementation)
+cd ~/teddy
+./teddy teddy_src/compiler.teddy -o /tmp/compiler.s
+as -o /tmp/compiler.o /tmp/compiler.s
+ld -o /tmp/compiler /tmp/compiler.o
+
+# Use the Teddy compiler
+echo 'fn main() { print 42; return 0; }' > /tmp/simple.teddy
+/tmp/compiler  # reads /tmp/simple.teddy, outputs /tmp/out.s
+as -o /tmp/out.o /tmp/out.s
+ld -o /tmp/out /tmp/out.o
+/tmp/out  # prints: 42
+
+# Self-compile! (bootstrap)
+cp teddy_src/compiler.teddy /tmp/simple.teddy
+/tmp/compiler  # outputs /tmp/out.s (the self-compiled compiler!)
+```
 
 ---
 
