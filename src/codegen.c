@@ -51,7 +51,8 @@ static int new_label(CodeGen *gen) {
 }
 
 static int find_local(CodeGen *gen, const char *name) {
-    for (int i = 0; i < gen->local_count; i++) {
+    // Search backwards to find most recent (innermost scope) variable first
+    for (int i = gen->local_count - 1; i >= 0; i--) {
         if (strcmp(gen->locals[i].name, name) == 0) {
             return gen->locals[i].offset;
         }
@@ -118,6 +119,23 @@ static void clear_locals(CodeGen *gen) {
     }
     gen->local_count = 0;
     gen->stack_offset = 0;
+    gen->scope_depth = 0;
+}
+
+static void push_scope(CodeGen *gen) {
+    gen->scope_stack[gen->scope_depth] = gen->local_count;
+    gen->scope_depth++;
+}
+
+static void pop_scope(CodeGen *gen) {
+    gen->scope_depth--;
+    int old_count = gen->scope_stack[gen->scope_depth];
+    // Free variable names that are going out of scope
+    for (int i = old_count; i < gen->local_count; i++) {
+        free(gen->locals[i].name);
+    }
+    gen->local_count = old_count;
+    // Note: we don't restore stack_offset because the stack space is still allocated
 }
 
 // Find field offset within a struct (returns byte offset, or -1 if not found)
@@ -783,9 +801,11 @@ static void codegen_stmt(CodeGen *gen, Stmt *stmt);
 
 static void codegen_block(CodeGen *gen, Stmt *stmt) {
     BlockStmt *block = &stmt->as.block;
+    push_scope(gen);
     for (int i = 0; i < block->count; i++) {
         codegen_stmt(gen, block->statements[i]);
     }
+    pop_scope(gen);
 }
 
 static void codegen_let(CodeGen *gen, Stmt *stmt) {

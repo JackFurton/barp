@@ -21,6 +21,10 @@ typedef struct {
     } locals[256];
     int local_count;
     
+    // Scope stack - stores local_count at each scope entry
+    int scope_stack[64];
+    int scope_depth;
+    
     // String literals table
     struct {
         char *value;

@@ -53,6 +53,51 @@ Think: Rust's expressiveness + effect tracking + powerful macros, but starting s
 
 ---
 
+## Session 8 - Variable Shadowing Fixed! (2026-02-22)
+
+**Issue #3 is DONE!** Variable shadowing now works correctly in both compilers.
+
+### The Fix:
+
+**Problem:** Variables in inner scopes were not shadowing outer variables properly. The symbol table searched from index 0, so it always found the first (outermost) variable.
+
+**Solution:** Implemented proper scope tracking with a scope stack:
+
+1. **Reverse search in `sym_find`/`find_local`**: Search backwards from most recent variable to find innermost scope first
+
+2. **Scope stack**: On block entry (`{`), push `sym_count` onto a stack. On block exit (`}`), restore `sym_count` to forget inner variables.
+
+3. **Added to both compilers**:
+   - C compiler: `push_scope()`/`pop_scope()` in `codegen.c`, scope_stack in CodeGen struct
+   - Teddy compiler: `scope_push()`/`scope_pop()`, `cmp_scope_stack`/`cmp_scope_depth` fields
+
+### Example that now works:
+
+```teddy
+fn main() {
+    let x = 10;
+    print x;      // 10
+    if 1 {
+        let x = 20;
+        print x;  // 20
+        if 1 {
+            let x = 30;
+            print x;  // 30
+        }
+        print x;  // 20 (inner x is gone)
+    }
+    print x;      // 10 (both inner x's are gone)
+    return 0;
+}
+```
+
+### Bootstrap Verified:
+```
+Stage 3 output == Stage 4 output (self-hosting confirmed!)
+```
+
+---
+
 ## Session 7 - Type & Effect Annotation Syntax Complete! (2026-02-22)
 
 **Effect annotations now work!** The `with` keyword parsing bug is fixed.

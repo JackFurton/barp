@@ -100,6 +100,9 @@ struct Compiler {
     cmp_sym_lens,      // array of name lengths
     cmp_sym_offsets,   // array of stack offsets
     cmp_sym_count,     // number of locals
+    // Scope tracking
+    cmp_scope_stack,   // array of sym_count values at scope entry
+    cmp_scope_depth,   // current scope depth
     // String table (for data section)
     cmp_str_starts,    // array of string start positions in source
     cmp_str_lens,      // array of string lengths
@@ -119,6 +122,7 @@ struct Compiler {
 fn MAX_STRINGS() { return 512; }
 fn MAX_STRUCTS() { return 16; }
 fn MAX_FIELDS() { return 32; }
+fn MAX_SCOPES() { return 64; }
 
 // ============ OUTPUT HELPERS ============
 // For now, we'll just print assembly to stdout
@@ -394,6 +398,9 @@ fn sym_init(cmp) {
     cmp.cmp_sym_offsets = alloc(MAX_LOCALS() * 8);
     cmp.cmp_sym_count = 0;
     cmp.cmp_stack_offset = 0;
+    // Initialize scope stack
+    cmp.cmp_scope_stack = alloc(MAX_SCOPES() * 8);
+    cmp.cmp_scope_depth = 0;
     // Initialize string table
     cmp.cmp_str_starts = alloc(MAX_STRINGS() * 8);
     cmp.cmp_str_lens = alloc(MAX_STRINGS() * 8);
@@ -411,6 +418,21 @@ fn sym_init(cmp) {
 fn sym_clear(cmp) {
     cmp.cmp_sym_count = 0;
     cmp.cmp_stack_offset = 0;
+    cmp.cmp_scope_depth = 0;
+    return 0;
+}
+
+// Push a new scope - save current sym_count
+fn scope_push(cmp) {
+    arr_set(cmp.cmp_scope_stack, cmp.cmp_scope_depth, cmp.cmp_sym_count);
+    cmp.cmp_scope_depth = cmp.cmp_scope_depth + 1;
+    return 0;
+}
+
+// Pop scope - restore sym_count to forget inner variables
+fn scope_pop(cmp) {
+    cmp.cmp_scope_depth = cmp.cmp_scope_depth - 1;
+    cmp.cmp_sym_count = arr_get(cmp.cmp_scope_stack, cmp.cmp_scope_depth);
     return 0;
 }
 
@@ -441,15 +463,16 @@ fn str_eq(src, start1, len1, start2, len2) {
 }
 
 // Find a local variable, returns stack offset or 0 if not found
+// Search backwards to find most recent (innermost scope) variable first
 fn sym_find(cmp, name_start, name_len) {
-    let symfind_idx = 0;
-    while symfind_idx < cmp.cmp_sym_count {
+    let symfind_idx = cmp.cmp_sym_count - 1;
+    while symfind_idx >= 0 {
         let sf_start = arr_get(cmp.cmp_sym_starts, symfind_idx);
         let sf_len = arr_get(cmp.cmp_sym_lens, symfind_idx);
         if str_eq(cmp.cmp_source, name_start, name_len, sf_start, sf_len) {
             return arr_get(cmp.cmp_sym_offsets, symfind_idx);
         }
-        symfind_idx = symfind_idx + 1;
+        symfind_idx = symfind_idx - 1;
     }
     return 0;  // Not found
 }
@@ -1299,9 +1322,11 @@ fn parse_return(cmp, out, pos) {
 // Parse a block: { statements }
 fn parse_block(cmp, out, pos) {
     consume(cmp, TOK_LBRACE());
+    scope_push(cmp);
     while !check(cmp, TOK_RBRACE()) && !check(cmp, TOK_EOF()) {
         pos = parse_statement(cmp, out, pos);
     }
+    scope_pop(cmp);
     consume(cmp, TOK_RBRACE());
     return pos;
 }
