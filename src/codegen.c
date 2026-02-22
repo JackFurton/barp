@@ -74,6 +74,44 @@ static int add_local(CodeGen *gen, const char *name) {
     return gen->stack_offset;
 }
 
+// Emit load from [x29, #offset] with large offset support
+// Uses x9 as scratch register
+static void emit_ldr_fp(CodeGen *gen, const char *reg, int offset) {
+    if (offset >= -255 && offset <= 255) {
+        // Use simple ldur for small offsets
+        emit(gen, "ldur %s, [x29, #%d]", reg, offset);
+    } else {
+        // For large offsets, use: mov x9, #offset; ldr reg, [x29, x9]
+        emit(gen, "mov x9, #%d", offset);
+        emit(gen, "ldr %s, [x29, x9]", reg);
+    }
+}
+
+// Emit store to [x29, #offset] with large offset support
+// Uses x9 as scratch register
+static void emit_str_fp(CodeGen *gen, const char *reg, int offset) {
+    if (offset >= -255 && offset <= 255) {
+        // Use simple stur for small offsets
+        emit(gen, "stur %s, [x29, #%d]", reg, offset);
+    } else {
+        // For large offsets, use: mov x9, #offset; str reg, [x29, x9]
+        emit(gen, "mov x9, #%d", offset);
+        emit(gen, "str %s, [x29, x9]", reg);
+    }
+}
+
+// Emit sub x0, x29, #offset (for getting address of stack-allocated struct)
+static void emit_sub_fp(CodeGen *gen, int neg_offset) {
+    // neg_offset is the negative offset, so we sub by -neg_offset to get address
+    int amount = -neg_offset;
+    if (amount <= 4095) {
+        emit(gen, "sub x0, x29, #%d", amount);
+    } else {
+        emit(gen, "mov x9, #%d", neg_offset);
+        emit(gen, "add x0, x29, x9");
+    }
+}
+
 static void clear_locals(CodeGen *gen) {
     for (int i = 0; i < gen->local_count; i++) {
         free(gen->locals[i].name);
@@ -302,12 +340,12 @@ static void codegen_struct_literal(CodeGen *gen, Expr *expr) {
         }
         
         codegen_expr(gen, sl->field_values[i]);
-        emit(gen, "str x0, [x29, #%d]", struct_offset + field_idx * 8);
+        emit_str_fp(gen, "x0", struct_offset + field_idx * 8);
     }
     
     // Return pointer to struct (address = x29 + offset)
     // Since struct_offset is negative, use sub with positive value
-    emit(gen, "sub x0, x29, #%d", -struct_offset);
+    emit_sub_fp(gen, struct_offset);
 }
 
 static void codegen_field_access(CodeGen *gen, Expr *expr) {
@@ -342,7 +380,7 @@ static void codegen_field_access(CodeGen *gen, Expr *expr) {
 
 static void codegen_variable(CodeGen *gen, Expr *expr) {
     int offset = find_local(gen, expr->as.variable.name);
-    emit(gen, "ldr x0, [x29, #%d]", offset);
+    emit_ldr_fp(gen, "x0", offset);
 }
 
 static void codegen_enum_variant(CodeGen *gen, Expr *expr) {
@@ -366,18 +404,18 @@ static void codegen_enum_variant(CodeGen *gen, Expr *expr) {
         if (ev->payload) {
             // Evaluate and store payload first (so it doesn't clobber our tag)
             codegen_expr(gen, ev->payload);
-            emit(gen, "str x0, [x29, #%d]", enum_offset + 8);  // store payload at offset 8
+            emit_str_fp(gen, "x0", enum_offset + 8);  // store payload at offset 8
         } else {
             // No payload - store 0 as placeholder
-            emit(gen, "str xzr, [x29, #%d]", enum_offset + 8);
+            emit_str_fp(gen, "xzr", enum_offset + 8);
         }
         
         // Store tag
         emit(gen, "mov x0, #%d", tag);
-        emit(gen, "str x0, [x29, #%d]", enum_offset);  // store tag at offset 0
+        emit_str_fp(gen, "x0", enum_offset);  // store tag at offset 0
         
         // Return pointer to the enum value
-        emit(gen, "sub x0, x29, #%d", -enum_offset);
+        emit_sub_fp(gen, enum_offset);
     } else {
         // Simple enum (no variants have data): just the tag value
         emit(gen, "mov x0, #%d", tag);
@@ -439,7 +477,7 @@ static void codegen_match(CodeGen *gen, Expr *expr) {
             emit(gen, "ldr x0, [sp]");        // reload enum pointer
             emit(gen, "ldr x0, [x0, #8]");    // load payload from offset 8
             int offset = add_local(gen, arm->binding_name);
-            emit(gen, "str x0, [x29, #%d]", offset);
+            emit_str_fp(gen, "x0", offset);
         }
         
         // Execute body
@@ -758,7 +796,7 @@ static void codegen_let(CodeGen *gen, Stmt *stmt) {
     
     // Allocate stack slot and store
     int offset = add_local(gen, let->name);
-    emit(gen, "str x0, [x29, #%d]", offset);
+    emit_str_fp(gen, "x0", offset);
 }
 
 static void codegen_assign(CodeGen *gen, Stmt *stmt) {
@@ -769,7 +807,7 @@ static void codegen_assign(CodeGen *gen, Stmt *stmt) {
     
     // Find existing variable and store
     int offset = find_local(gen, assign->name);
-    emit(gen, "str x0, [x29, #%d]", offset);
+    emit_str_fp(gen, "x0", offset);
 }
 
 static void codegen_index_assign(CodeGen *gen, Stmt *stmt) {
@@ -942,13 +980,13 @@ static void codegen_function(CodeGen *gen, Function *fn) {
     emit(gen, "stp x29, x30, [sp, #-16]!");
     emit(gen, "mov x29, sp");
     
-    // Reserve space for locals (256 bytes)
-    emit(gen, "sub sp, sp, #256");
+    // Reserve space for locals (512 bytes - enough for large structs)
+    emit(gen, "sub sp, sp, #512");
     
     // Move arguments from registers to stack
     for (int i = 0; i < fn->param_count && i < 8; i++) {
         int offset = add_local(gen, fn->params[i]);
-        emit(gen, "str %s, [x29, #%d]", arg_regs[i], offset);
+        emit_str_fp(gen, arg_regs[i], offset);
     }
     
     // Generate body
@@ -1094,20 +1132,28 @@ static void emit_print_str(CodeGen *gen) {
 static void emit_file_io(CodeGen *gen) {
     // _builtin_read_file: x0 = filename ptr (null-terminated)
     // Returns: x0 = ptr to buffer with [length][data...]
-    // Uses a fixed 8KB buffer on stack for simplicity
+    // Uses mmap to allocate 128KB buffer for large files
     emit_raw(gen, "");
     emit_raw(gen, "// Builtin: read_file");
     emit_raw(gen, "_builtin_read_file:");
     emit(gen, "stp x29, x30, [sp, #-16]!");
     emit(gen, "mov x29, sp");
-    
-    // Allocate 4KB + 16 bytes = 4112 (do in two steps due to ARM64 immediate limits)
-    emit(gen, "sub sp, sp, #4096");
-    emit(gen, "sub sp, sp, #16");
-    emit(gen, "mov x10, sp");          // x10 = buffer start
+    emit(gen, "stp x19, x20, [sp, #-16]!");  // save callee-saved regs
+    emit(gen, "stp x21, x22, [sp, #-16]!");
     
     // Save filename in callee-saved register
     emit(gen, "mov x19, x0");          // x19 = filename (callee-saved)
+    
+    // Allocate 128KB buffer via mmap
+    emit(gen, "mov x0, #0");           // addr = NULL
+    emit(gen, "mov x1, #131072");      // 128KB size
+    emit(gen, "mov x2, #3");           // PROT_READ|PROT_WRITE
+    emit(gen, "mov x3, #0x22");        // MAP_PRIVATE|MAP_ANONYMOUS
+    emit(gen, "mov x4, #-1");          // fd
+    emit(gen, "mov x5, #0");           // offset
+    emit(gen, "mov x8, #222");         // sys_mmap
+    emit(gen, "svc #0");
+    emit(gen, "mov x20, x0");          // x20 = buffer (callee-saved)
     
     // openat(AT_FDCWD, filename, O_RDONLY, 0)
     emit(gen, "mov x0, #-100");        // AT_FDCWD
@@ -1116,24 +1162,25 @@ static void emit_file_io(CodeGen *gen) {
     emit(gen, "mov x3, #0");           // mode
     emit(gen, "mov x8, #56");          // sys_openat
     emit(gen, "svc #0");
-    emit(gen, "mov x11, x0");          // x11 = fd
+    emit(gen, "mov x21, x0");          // x21 = fd (callee-saved)
     
-    // read(fd, buf+8, 4096)
-    emit(gen, "mov x0, x11");          // fd
-    emit(gen, "add x1, x10, #8");      // buf + 8 (skip length field)
-    emit(gen, "mov x2, #4096");        // max bytes
+    // read(fd, buf+8, 128KB-8)
+    emit(gen, "mov x0, x21");          // fd
+    emit(gen, "add x1, x20, #8");      // buf + 8 (skip length field)
+    emit(gen, "mov x2, #131064");      // max bytes (128KB - 8)
     emit(gen, "mov x8, #63");          // sys_read
     emit(gen, "svc #0");
-    emit(gen, "str x0, [x10]");        // store bytes read as length
+    emit(gen, "str x0, [x20]");        // store bytes read as length
     
     // close(fd)
-    emit(gen, "mov x0, x11");
+    emit(gen, "mov x0, x21");
     emit(gen, "mov x8, #57");          // sys_close
     emit(gen, "svc #0");
     
     // Return buffer pointer
-    emit(gen, "mov x0, x10");
-    emit(gen, "mov sp, x29");
+    emit(gen, "mov x0, x20");
+    emit(gen, "ldp x21, x22, [sp], #16");  // restore callee-saved regs
+    emit(gen, "ldp x19, x20, [sp], #16");
     emit(gen, "ldp x29, x30, [sp], #16");
     emit(gen, "ret");
     
