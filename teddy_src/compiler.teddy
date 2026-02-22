@@ -55,6 +55,8 @@ fn TOK_TRUE() { return 36; }
 fn TOK_FALSE() { return 37; }
 fn TOK_EOF() { return 38; }
 fn TOK_ERROR() { return 39; }
+fn TOK_ANDAND() { return 40; }
+fn TOK_OROR() { return 41; }
 
 // ============ SYMBOL TABLE ============
 // Using peek/poke for dynamic array access
@@ -112,7 +114,7 @@ struct Compiler {
     cmp_had_error
 }
 
-fn MAX_STRINGS() { return 64; }
+fn MAX_STRINGS() { return 512; }
 fn MAX_STRUCTS() { return 16; }
 fn MAX_FIELDS() { return 32; }
 
@@ -208,12 +210,12 @@ fn make_token(cmp, tok_type) {
 fn check_keyword(cmp, kw_start, kw_len, rest, kw_type) {
     let tok_len = cmp.cmp_current - cmp.cmp_start;
     if tok_len != kw_start + kw_len { return TOK_IDENT(); }
-    let i = 0;
-    while i < kw_len {
-        if char_at(cmp.cmp_source, cmp.cmp_start + kw_start + i) != char_at(rest, i) {
+    let chkkw_idx = 0;
+    while chkkw_idx < kw_len {
+        if char_at(cmp.cmp_source, cmp.cmp_start + kw_start + chkkw_idx) != char_at(rest, chkkw_idx) {
             return TOK_IDENT();
         }
-        i = i + 1;
+        chkkw_idx = chkkw_idx + 1;
     }
     return kw_type;
 }
@@ -259,7 +261,15 @@ fn scan_string(cmp) {
         if lex_peek(cmp) == 10 {
             cmp.cmp_line = cmp.cmp_line + 1;
         }
-        lex_advance(cmp);
+        // Handle escape sequences - skip the next character after backslash
+        if lex_peek(cmp) == 92 {
+            lex_advance(cmp);
+            if !lex_at_end(cmp) {
+                lex_advance(cmp);
+            }
+        } else {
+            lex_advance(cmp);
+        }
     }
     if lex_at_end(cmp) {
         make_token(cmp, TOK_ERROR());
@@ -326,10 +336,12 @@ fn next_token(cmp) {
         return 0;
     }
     if c == 38 {
-        if lex_match(cmp, 38) { make_token(cmp, TOK_AND()); return 0; }
+        if lex_match(cmp, 38) { make_token(cmp, TOK_ANDAND()); return 0; }
+        // Single & not supported, fall through to error
     }
     if c == 124 {
-        if lex_match(cmp, 124) { make_token(cmp, TOK_OR()); return 0; }
+        if lex_match(cmp, 124) { make_token(cmp, TOK_OROR()); return 0; }
+        // Single | not supported, fall through to error
     }
     if c == 34 {
         scan_string(cmp);
@@ -405,26 +417,26 @@ fn sym_add(cmp, name_start, name_len) {
 // Compare two strings in source
 fn str_eq(src, start1, len1, start2, len2) {
     if len1 != len2 { return 0; }
-    let i = 0;
-    while i < len1 {
-        if char_at(src, start1 + i) != char_at(src, start2 + i) {
+    let streq_idx = 0;
+    while streq_idx < len1 {
+        if char_at(src, start1 + streq_idx) != char_at(src, start2 + streq_idx) {
             return 0;
         }
-        i = i + 1;
+        streq_idx = streq_idx + 1;
     }
     return 1;
 }
 
 // Find a local variable, returns stack offset or 0 if not found
 fn sym_find(cmp, name_start, name_len) {
-    let i = 0;
-    while i < cmp.cmp_sym_count {
-        let s = arr_get(cmp.cmp_sym_starts, i);
-        let l = arr_get(cmp.cmp_sym_lens, i);
-        if str_eq(cmp.cmp_source, name_start, name_len, s, l) {
-            return arr_get(cmp.cmp_sym_offsets, i);
+    let symfind_idx = 0;
+    while symfind_idx < cmp.cmp_sym_count {
+        let sf_start = arr_get(cmp.cmp_sym_starts, symfind_idx);
+        let sf_len = arr_get(cmp.cmp_sym_lens, symfind_idx);
+        if str_eq(cmp.cmp_source, name_start, name_len, sf_start, sf_len) {
+            return arr_get(cmp.cmp_sym_offsets, symfind_idx);
         }
-        i = i + 1;
+        symfind_idx = symfind_idx + 1;
     }
     return 0;  // Not found
 }
@@ -432,12 +444,12 @@ fn sym_find(cmp, name_start, name_len) {
 // Check if name matches a literal string (for builtin detection)
 fn name_is(src, start, len, literal, lit_len) {
     if len != lit_len { return 0; }
-    let i = 0;
-    while i < len {
-        if char_at(src, start + i) != char_at(literal, i) {
+    let nameis_idx = 0;
+    while nameis_idx < len {
+        if char_at(src, start + nameis_idx) != char_at(literal, nameis_idx) {
             return 0;
         }
-        i = i + 1;
+        nameis_idx = nameis_idx + 1;
     }
     return 1;
 }
@@ -470,14 +482,14 @@ fn struct_add_field(cmp, struct_idx, field_start, field_len) {
 
 // Find a struct by name, returns index or -1
 fn struct_find(cmp, name_start, name_len) {
-    let i = 0;
-    while i < cmp.cmp_struct_count {
-        let s = arr_get(cmp.cmp_struct_names, i);
-        let l = arr_get(cmp.cmp_struct_name_lens, i);
-        if str_eq(cmp.cmp_source, name_start, name_len, s, l) {
-            return i;
+    let stfind_idx = 0;
+    while stfind_idx < cmp.cmp_struct_count {
+        let stf_start = arr_get(cmp.cmp_struct_names, stfind_idx);
+        let stf_len = arr_get(cmp.cmp_struct_name_lens, stfind_idx);
+        if str_eq(cmp.cmp_source, name_start, name_len, stf_start, stf_len) {
+            return stfind_idx;
         }
-        i = i + 1;
+        stfind_idx = stfind_idx + 1;
     }
     return 0 - 1;  // -1 = not found
 }
@@ -627,18 +639,18 @@ fn emit_add_fp(out, pos, fp_offset) {
 // Parse integer literal - result in x0
 fn parse_int_literal(cmp, out, pos) {
     // Extract the integer value from the token
-    let val = 0;
-    let i = cmp.cmp_prev_start;
-    let end = cmp.cmp_prev_start + cmp.cmp_prev_len;
-    while i < end {
-        let c = char_at(cmp.cmp_source, i);
-        val = val * 10 + (c - 48);
-        i = i + 1;
+    let intlit_val = 0;
+    let intlit_pos = cmp.cmp_prev_start;
+    let intlit_end = cmp.cmp_prev_start + cmp.cmp_prev_len;
+    while intlit_pos < intlit_end {
+        let intlit_ch = char_at(cmp.cmp_source, intlit_pos);
+        intlit_val = intlit_val * 10 + (intlit_ch - 48);
+        intlit_pos = intlit_pos + 1;
     }
     
     // Emit: mov x0, #val
     pos = emit_str(out, pos, "    mov x0, #", 13);
-    pos = emit_int(out, pos, val);
+    pos = emit_int(out, pos, intlit_val);
     pos = emit_str(out, pos, "\n", 1);
     return pos;
 }
@@ -720,11 +732,11 @@ fn parse_primary(cmp, out, pos) {
         
         // Pop elements from stack in reverse order into array slots
         // Elements were pushed in order, so last element is on top
-        let i = elem_count - 1;
-        while i >= 0 {
+        let arrlit_idx = elem_count - 1;
+        while arrlit_idx >= 0 {
             pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
-            pos = emit_str_fp(out, pos, "x1", arr_offset + 8 + i * 8);
-            i = i - 1;
+            pos = emit_str_fp(out, pos, "x1", arr_offset + 8 + arrlit_idx * 8);
+            arrlit_idx = arrlit_idx - 1;
         }
         
         // Return pointer to array (address of length slot)
@@ -734,11 +746,11 @@ fn parse_primary(cmp, out, pos) {
     }
     
     if match_tok(cmp, TOK_IDENT()) {
-        let name_start = cmp.cmp_prev_start;
-        let name_len = cmp.cmp_prev_len;
+        let prim_name_start = cmp.cmp_prev_start;
+        let prim_name_len = cmp.cmp_prev_len;
         
         // Check first char to see if it's uppercase (struct name)
-        let first_char = char_at(cmp.cmp_source, name_start);
+        let first_char = char_at(cmp.cmp_source, prim_name_start);
         let is_upper = first_char >= 65 && first_char <= 90;
         
         // Check for struct literal: StructName { field: value, ... }
@@ -746,7 +758,7 @@ fn parse_primary(cmp, out, pos) {
             next_token(cmp);  // consume '{'
             
             // Find struct definition
-            let struct_idx = struct_find(cmp, name_start, name_len);
+            let struct_idx = struct_find(cmp, prim_name_start, prim_name_len);
             if struct_idx < 0 {
                 print "Unknown struct";
                 cmp.cmp_had_error = 1;
@@ -768,8 +780,8 @@ fn parse_primary(cmp, out, pos) {
                 pos = parse_expression(cmp, out, pos);
                 
                 // Find field offset
-                let foff = field_find(cmp, field_name_start, field_name_len);
-                pos = emit_str_fp(out, pos, "x0", struct_offset + foff);
+                let init_foff = field_find(cmp, field_name_start, field_name_len);
+                pos = emit_str_fp(out, pos, "x0", struct_offset + init_foff);
                 
                 while check(cmp, TOK_COMMA()) {
                     next_token(cmp);  // consume ','
@@ -779,8 +791,8 @@ fn parse_primary(cmp, out, pos) {
                     consume(cmp, TOK_COLON());
                     pos = parse_expression(cmp, out, pos);
                     
-                    foff = field_find(cmp, field_name_start, field_name_len);
-                    pos = emit_str_fp(out, pos, "x0", struct_offset + foff);
+                    init_foff = field_find(cmp, field_name_start, field_name_len);
+                    pos = emit_str_fp(out, pos, "x0", struct_offset + init_foff);
                 }
             }
             consume(cmp, TOK_RBRACE());
@@ -795,25 +807,25 @@ fn parse_primary(cmp, out, pos) {
             next_token(cmp);  // consume '('
             
             // Parse arguments and push to stack
-            let arg_count = 0;
+            let prim_arg_cnt = 0;
             if !check(cmp, TOK_RPAREN()) {
                 // First argument
                 pos = parse_expression(cmp, out, pos);
                 pos = emit_str(out, pos, "    str x0, [sp, #-16]!\n", 24);
-                arg_count = arg_count + 1;
+                prim_arg_cnt = prim_arg_cnt + 1;
                 
                 while check(cmp, TOK_COMMA()) {
                     next_token(cmp);  // consume ','
                     pos = parse_expression(cmp, out, pos);
                     pos = emit_str(out, pos, "    str x0, [sp, #-16]!\n", 24);
-                    arg_count = arg_count + 1;
+                    prim_arg_cnt = prim_arg_cnt + 1;
                 }
             }
             consume(cmp, TOK_RPAREN());
             
             // Check for builtins and emit inline code
             // put_str(ptr, len) - write string to stdout
-            if name_is(cmp.cmp_source, name_start, name_len, "put_str\0", 7) {
+            if name_is(cmp.cmp_source, prim_name_start, prim_name_len, "put_str\0", 7) {
                 pos = emit_str(out, pos, "    ldr x2, [sp], #16\n", 22);  // len
                 pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);  // ptr
                 pos = emit_str(out, pos, "    mov x0, #1\n", 15);          // stdout
@@ -823,7 +835,7 @@ fn parse_primary(cmp, out, pos) {
             }
             
             // put_char(c) - write single char to stdout
-            if name_is(cmp.cmp_source, name_start, name_len, "put_char\0", 8) {
+            if name_is(cmp.cmp_source, prim_name_start, prim_name_len, "put_char\0", 8) {
                 pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
                 pos = emit_str(out, pos, "    str x1, [sp, #-16]!\n", 24);
                 pos = emit_str(out, pos, "    mov x0, #1\n", 15);
@@ -836,7 +848,7 @@ fn parse_primary(cmp, out, pos) {
             }
             
             // char_at(str, idx) - get character at index
-            if name_is(cmp.cmp_source, name_start, name_len, "char_at\0", 7) {
+            if name_is(cmp.cmp_source, prim_name_start, prim_name_len, "char_at\0", 7) {
                 pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);  // idx
                 pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);  // str
                 pos = emit_str(out, pos, "    ldrb w0, [x0, x1]\n", 22);
@@ -844,7 +856,7 @@ fn parse_primary(cmp, out, pos) {
             }
             
             // alloc(size) - allocate memory via mmap
-            if name_is(cmp.cmp_source, name_start, name_len, "alloc\0", 5) {
+            if name_is(cmp.cmp_source, prim_name_start, prim_name_len, "alloc\0", 5) {
                 pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);  // size
                 pos = emit_str(out, pos, "    mov x0, #0\n", 15);          // addr = NULL
                 pos = emit_str(out, pos, "    mov x2, #3\n", 15);          // PROT_READ|PROT_WRITE
@@ -857,14 +869,14 @@ fn parse_primary(cmp, out, pos) {
             }
             
             // peek(addr) - read 8 bytes from address
-            if name_is(cmp.cmp_source, name_start, name_len, "peek\0", 4) {
+            if name_is(cmp.cmp_source, prim_name_start, prim_name_len, "peek\0", 4) {
                 pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);
                 pos = emit_str(out, pos, "    ldr x0, [x0]\n", 17);
                 return pos;
             }
             
             // poke(addr, val) - write 8 bytes to address
-            if name_is(cmp.cmp_source, name_start, name_len, "poke\0", 4) {
+            if name_is(cmp.cmp_source, prim_name_start, prim_name_len, "poke\0", 4) {
                 pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);  // val
                 pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);  // addr
                 pos = emit_str(out, pos, "    str x1, [x0]\n", 17);
@@ -872,35 +884,35 @@ fn parse_primary(cmp, out, pos) {
             }
             
             // str_copy(dest, src, len) - copy bytes
-            if name_is(cmp.cmp_source, name_start, name_len, "str_copy\0", 8) {
-                let cp_label = cmp.cmp_label_count;
+            if name_is(cmp.cmp_source, prim_name_start, prim_name_len, "str_copy\0", 8) {
+                let strcpy_loop = cmp.cmp_label_count;
                 cmp.cmp_label_count = cmp.cmp_label_count + 1;
-                let done_label = cmp.cmp_label_count;
+                let strcpy_done = cmp.cmp_label_count;
                 cmp.cmp_label_count = cmp.cmp_label_count + 1;
                 
                 pos = emit_str(out, pos, "    ldr x2, [sp], #16\n", 22);  // len
                 pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);  // src
                 pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);  // dest
                 pos = emit_str(out, pos, ".L", 2);
-                pos = emit_int(out, pos, cp_label);
+                pos = emit_int(out, pos, strcpy_loop);
                 pos = emit_str(out, pos, ":\n", 2);
                 pos = emit_str(out, pos, "    cbz x2, .L", 14);
-                pos = emit_int(out, pos, done_label);
+                pos = emit_int(out, pos, strcpy_done);
                 pos = emit_str(out, pos, "\n", 1);
                 pos = emit_str(out, pos, "    ldrb w3, [x1], #1\n", 22);
                 pos = emit_str(out, pos, "    strb w3, [x0], #1\n", 22);
                 pos = emit_str(out, pos, "    sub x2, x2, #1\n", 19);
                 pos = emit_str(out, pos, "    b .L", 8);
-                pos = emit_int(out, pos, cp_label);
+                pos = emit_int(out, pos, strcpy_loop);
                 pos = emit_str(out, pos, "\n", 1);
                 pos = emit_str(out, pos, ".L", 2);
-                pos = emit_int(out, pos, done_label);
+                pos = emit_int(out, pos, strcpy_done);
                 pos = emit_str(out, pos, ":\n", 2);
                 return pos;
             }
             
             // int_to_str(dest, n) - convert int to string, return length
-            if name_is(cmp.cmp_source, name_start, name_len, "int_to_str\0", 10) {
+            if name_is(cmp.cmp_source, prim_name_start, prim_name_len, "int_to_str\0", 10) {
                 pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);  // n
                 pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);  // dest
                 pos = emit_str(out, pos, "    bl _int_to_str\n", 19);
@@ -908,14 +920,14 @@ fn parse_primary(cmp, out, pos) {
             }
             
             // read_file(filename) - returns ptr to [length, data]
-            if name_is(cmp.cmp_source, name_start, name_len, "read_file\0", 9) {
+            if name_is(cmp.cmp_source, prim_name_start, prim_name_len, "read_file\0", 9) {
                 pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);  // filename
                 pos = emit_str(out, pos, "    bl _builtin_read_file\n", 26);
                 return pos;
             }
             
             // write_file(filename, content, length)
-            if name_is(cmp.cmp_source, name_start, name_len, "write_file\0", 10) {
+            if name_is(cmp.cmp_source, prim_name_start, prim_name_len, "write_file\0", 10) {
                 pos = emit_str(out, pos, "    ldr x2, [sp], #16\n", 22);  // length
                 pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);  // content
                 pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);  // filename
@@ -924,21 +936,21 @@ fn parse_primary(cmp, out, pos) {
             }
             
             // Regular function call - pop args into registers
-            if arg_count >= 1 {
+            if prim_arg_cnt >= 1 {
                 // Pop last arg into highest reg, etc.
-                let r = arg_count - 1;
-                while r >= 0 {
+                let prim_reg = prim_arg_cnt - 1;
+                while prim_reg >= 0 {
                     pos = emit_str(out, pos, "    ldr x", 9);
-                    pos = emit_int(out, pos, r);
+                    pos = emit_int(out, pos, prim_reg);
                     pos = emit_str(out, pos, ", [sp], #16\n", 12);
-                    r = r - 1;
+                    prim_reg = prim_reg - 1;
                 }
             }
             
             // Emit call: bl function_name
             pos = emit_str(out, pos, "    bl ", 7);
-            str_copy(out + pos, cmp.cmp_source + name_start, name_len);
-            pos = pos + name_len;
+            str_copy(out + pos, cmp.cmp_source + prim_name_start, prim_name_len);
+            pos = pos + prim_name_len;
             pos = emit_str(out, pos, "\n", 1);
             return pos;
         }
@@ -948,12 +960,12 @@ fn parse_primary(cmp, out, pos) {
             next_token(cmp);  // consume '['
             
             // Load array base address first
-            let offset = sym_find(cmp, name_start, name_len);
-            if offset == 0 {
+            let arr_var_off = sym_find(cmp, prim_name_start, prim_name_len);
+            if arr_var_off == 0 {
                 print "Undefined variable";
                 cmp.cmp_had_error = 1;
             }
-            pos = emit_ldr_fp(out, pos, "x1", offset);
+            pos = emit_ldr_fp(out, pos, "x1", arr_var_off);
             pos = emit_str(out, pos, "    str x1, [sp, #-16]!\n", 24);
             
             // Parse index expression
@@ -972,7 +984,7 @@ fn parse_primary(cmp, out, pos) {
         }
         
         // Variable reference - load from stack
-        let var_offset = sym_find(cmp, name_start, name_len);
+        let var_offset = sym_find(cmp, prim_name_start, prim_name_len);
         if var_offset == 0 {
             print "Undefined variable";
             cmp.cmp_had_error = 1;
@@ -1118,9 +1130,82 @@ fn parse_equality(cmp, out, pos) {
     return pos;
 }
 
+// Parse logical AND (&&) with short-circuit evaluation
+fn parse_and(cmp, out, pos) {
+    pos = parse_equality(cmp, out, pos);
+    
+    while check(cmp, TOK_ANDAND()) {
+        next_token(cmp);
+        
+        // Short-circuit: if x0 is 0, skip RHS and result is 0
+        let and_end_lbl = cmp.cmp_label_count;
+        cmp.cmp_label_count = cmp.cmp_label_count + 1;
+        
+        pos = emit_str(out, pos, "    cmp x0, #0\n", 15);
+        pos = emit_str(out, pos, "    b.eq .L", 11);
+        pos = emit_int(out, pos, and_end_lbl);
+        pos = emit_str(out, pos, "\n", 1);
+        
+        // Evaluate RHS
+        pos = parse_equality(cmp, out, pos);
+        
+        // Convert to boolean (0 or 1)
+        pos = emit_str(out, pos, "    cmp x0, #0\n", 15);
+        pos = emit_str(out, pos, "    cset x0, ne\n", 16);
+        
+        // End label
+        pos = emit_str(out, pos, ".L", 2);
+        pos = emit_int(out, pos, and_end_lbl);
+        pos = emit_str(out, pos, ":\n", 2);
+    }
+    
+    return pos;
+}
+
+// Parse logical OR (||) with short-circuit evaluation
+fn parse_or(cmp, out, pos) {
+    pos = parse_and(cmp, out, pos);
+    
+    while check(cmp, TOK_OROR()) {
+        next_token(cmp);
+        
+        // Short-circuit: if x0 is non-0, skip RHS and result is 1
+        let or_end_lbl = cmp.cmp_label_count;
+        cmp.cmp_label_count = cmp.cmp_label_count + 1;
+        
+        pos = emit_str(out, pos, "    cmp x0, #0\n", 15);
+        pos = emit_str(out, pos, "    b.ne .L", 11);
+        pos = emit_int(out, pos, or_end_lbl);
+        pos = emit_str(out, pos, "_t\n", 3);
+        
+        // Evaluate RHS
+        pos = parse_and(cmp, out, pos);
+        
+        // Convert to boolean
+        pos = emit_str(out, pos, "    cmp x0, #0\n", 15);
+        pos = emit_str(out, pos, "    cset x0, ne\n", 16);
+        pos = emit_str(out, pos, "    b .L", 8);
+        pos = emit_int(out, pos, or_end_lbl);
+        pos = emit_str(out, pos, "_e\n", 3);
+        
+        // True label - set to 1
+        pos = emit_str(out, pos, ".L", 2);
+        pos = emit_int(out, pos, or_end_lbl);
+        pos = emit_str(out, pos, "_t:\n", 4);
+        pos = emit_str(out, pos, "    mov x0, #1\n", 15);
+        
+        // End label
+        pos = emit_str(out, pos, ".L", 2);
+        pos = emit_int(out, pos, or_end_lbl);
+        pos = emit_str(out, pos, "_e:\n", 4);
+    }
+    
+    return pos;
+}
+
 // Parse expression (top level)
 fn parse_expression(cmp, out, pos) {
-    return parse_equality(cmp, out, pos);
+    return parse_or(cmp, out, pos);
 }
 
 // ============ STATEMENT PARSING ============
@@ -1128,32 +1213,32 @@ fn parse_expression(cmp, out, pos) {
 // Parse let statement: let name = expr;
 fn parse_let(cmp, out, pos) {
     consume(cmp, TOK_IDENT());
-    let name_start = cmp.cmp_prev_start;
-    let name_len = cmp.cmp_prev_len;
+    let let_name_start = cmp.cmp_prev_start;
+    let let_name_len = cmp.cmp_prev_len;
     
     consume(cmp, TOK_EQ());
     pos = parse_expression(cmp, out, pos);
     consume(cmp, TOK_SEMI());
     
     // Add to symbol table and store on stack
-    let offset = sym_add(cmp, name_start, name_len);
-    pos = emit_str_fp(out, pos, "x0", offset);
+    let let_var_off = sym_add(cmp, let_name_start, let_name_len);
+    pos = emit_str_fp(out, pos, "x0", let_var_off);
     
     return pos;
 }
 
 // Parse assignment: name = expr;
-fn parse_assign(cmp, out, pos, name_start, name_len) {
+fn parse_assign(cmp, out, pos, assign_nm_start, assign_nm_len) {
     consume(cmp, TOK_EQ());
     pos = parse_expression(cmp, out, pos);
     consume(cmp, TOK_SEMI());
     
-    let offset = sym_find(cmp, name_start, name_len);
-    if offset == 0 {
+    let assign_var_off = sym_find(cmp, assign_nm_start, assign_nm_len);
+    if assign_var_off == 0 {
         print "Undefined variable in assignment";
         cmp.cmp_had_error = 1;
     }
-    pos = emit_str_fp(out, pos, "x0", offset);
+    pos = emit_str_fp(out, pos, "x0", assign_var_off);
     
     return pos;
 }
@@ -1218,25 +1303,25 @@ fn parse_statement(cmp, out, pos) {
     if match_tok(cmp, TOK_IF()) {
         pos = parse_expression(cmp, out, pos);
         
-        let else_label = cmp.cmp_label_count;
+        let if_else_lbl = cmp.cmp_label_count;
         cmp.cmp_label_count = cmp.cmp_label_count + 1;
-        let end_label = cmp.cmp_label_count;
+        let if_end_lbl = cmp.cmp_label_count;
         cmp.cmp_label_count = cmp.cmp_label_count + 1;
         
         pos = emit_str(out, pos, "    cmp x0, #0\n", 15);
         pos = emit_str(out, pos, "    b.eq .L", 11);
-        pos = emit_int(out, pos, else_label);
+        pos = emit_int(out, pos, if_else_lbl);
         pos = emit_str(out, pos, "\n", 1);
         
         // Then block
         pos = parse_block(cmp, out, pos);
         pos = emit_str(out, pos, "    b .L", 8);
-        pos = emit_int(out, pos, end_label);
+        pos = emit_int(out, pos, if_end_lbl);
         pos = emit_str(out, pos, "\n", 1);
         
         // Else label
         pos = emit_str(out, pos, ".L", 2);
-        pos = emit_int(out, pos, else_label);
+        pos = emit_int(out, pos, if_else_lbl);
         pos = emit_str(out, pos, ":\n", 2);
         
         // Else block (optional)
@@ -1246,7 +1331,7 @@ fn parse_statement(cmp, out, pos) {
         
         // End label
         pos = emit_str(out, pos, ".L", 2);
-        pos = emit_int(out, pos, end_label);
+        pos = emit_int(out, pos, if_end_lbl);
         pos = emit_str(out, pos, ":\n", 2);
         
         return pos;
@@ -1254,32 +1339,32 @@ fn parse_statement(cmp, out, pos) {
     
     // WHILE statement - inline to avoid forward reference
     if match_tok(cmp, TOK_WHILE()) {
-        let start_label = cmp.cmp_label_count;
+        let wh_start_lbl = cmp.cmp_label_count;
         cmp.cmp_label_count = cmp.cmp_label_count + 1;
-        let end_label = cmp.cmp_label_count;
+        let wh_end_lbl = cmp.cmp_label_count;
         cmp.cmp_label_count = cmp.cmp_label_count + 1;
         
         // Start label
         pos = emit_str(out, pos, ".L", 2);
-        pos = emit_int(out, pos, start_label);
+        pos = emit_int(out, pos, wh_start_lbl);
         pos = emit_str(out, pos, ":\n", 2);
         
         // Condition
         pos = parse_expression(cmp, out, pos);
         pos = emit_str(out, pos, "    cmp x0, #0\n", 15);
         pos = emit_str(out, pos, "    b.eq .L", 11);
-        pos = emit_int(out, pos, end_label);
+        pos = emit_int(out, pos, wh_end_lbl);
         pos = emit_str(out, pos, "\n", 1);
         
         // Body
         pos = parse_block(cmp, out, pos);
         pos = emit_str(out, pos, "    b .L", 8);
-        pos = emit_int(out, pos, start_label);
+        pos = emit_int(out, pos, wh_start_lbl);
         pos = emit_str(out, pos, "\n", 1);
         
         // End label
         pos = emit_str(out, pos, ".L", 2);
-        pos = emit_int(out, pos, end_label);
+        pos = emit_int(out, pos, wh_end_lbl);
         pos = emit_str(out, pos, ":\n", 2);
         
         return pos;
@@ -1288,23 +1373,23 @@ fn parse_statement(cmp, out, pos) {
     if match_tok(cmp, TOK_IDENT()) {
         // Could be assignment (ident = expr;) or field assignment (ident.field = expr;)
         // or expression statement (call();)
-        let name_start = cmp.cmp_prev_start;
-        let name_len = cmp.cmp_prev_len;
+        let stmt_name_start = cmp.cmp_prev_start;
+        let stmt_name_len = cmp.cmp_prev_len;
         
         // Check if next token is '=' for simple assignment
         if check(cmp, TOK_EQ()) {
-            return parse_assign(cmp, out, pos, name_start, name_len);
+            return parse_assign(cmp, out, pos, stmt_name_start, stmt_name_len);
         }
         
         // Check for field assignment: ident.field = expr;
         if check(cmp, TOK_DOT()) {
             // Load struct pointer first
-            let var_offset = sym_find(cmp, name_start, name_len);
-            if var_offset == 0 {
+            let stmt_var_off = sym_find(cmp, stmt_name_start, stmt_name_len);
+            if stmt_var_off == 0 {
                 print "Undefined variable";
                 cmp.cmp_had_error = 1;
             }
-            pos = emit_ldr_fp(out, pos, "x1", var_offset);
+            pos = emit_ldr_fp(out, pos, "x1", stmt_var_off);
             
             // Parse field chain until we hit '='
             while check(cmp, TOK_DOT()) {
@@ -1315,20 +1400,25 @@ fn parse_statement(cmp, out, pos) {
                 
                 if check(cmp, TOK_DOT()) {
                     // More fields coming, load this field (it's a nested struct ptr)
-                    let foff = field_find(cmp, field_start, field_len);
+                    let foff_nested = field_find(cmp, field_start, field_len);
                     pos = emit_str(out, pos, "    ldr x1, [x1, #", 18);
-                    pos = emit_int(out, pos, foff);
+                    pos = emit_int(out, pos, foff_nested);
                     pos = emit_str(out, pos, "]\n", 2);
                 } else {
                     // This is the final field, prepare for assignment
-                    // x1 has struct pointer, we'll store to x1 + field_offset
+                    // x1 has struct pointer, push it to preserve across expression eval
+                    pos = emit_str(out, pos, "    str x1, [sp, #-16]!\n", 24);
+                    
                     consume(cmp, TOK_EQ());
                     pos = parse_expression(cmp, out, pos);
                     consume(cmp, TOK_SEMI());
                     
-                    let foff = field_find(cmp, field_start, field_len);
+                    // Pop struct pointer back into x1
+                    pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
+                    
+                    let foff_final = field_find(cmp, field_start, field_len);
                     pos = emit_str(out, pos, "    str x0, [x1, #", 18);
-                    pos = emit_int(out, pos, foff);
+                    pos = emit_int(out, pos, foff_final);
                     pos = emit_str(out, pos, "]\n", 2);
                     return pos;
                 }
@@ -1344,24 +1434,24 @@ fn parse_statement(cmp, out, pos) {
             next_token(cmp);  // consume '('
             
             // Parse arguments and push to stack
-            let arg_count = 0;
+            let stmt_arg_cnt = 0;
             if !check(cmp, TOK_RPAREN()) {
                 pos = parse_expression(cmp, out, pos);
                 pos = emit_str(out, pos, "    str x0, [sp, #-16]!\n", 24);
-                arg_count = arg_count + 1;
+                stmt_arg_cnt = stmt_arg_cnt + 1;
                 
                 while check(cmp, TOK_COMMA()) {
                     next_token(cmp);
                     pos = parse_expression(cmp, out, pos);
                     pos = emit_str(out, pos, "    str x0, [sp, #-16]!\n", 24);
-                    arg_count = arg_count + 1;
+                    stmt_arg_cnt = stmt_arg_cnt + 1;
                 }
             }
             consume(cmp, TOK_RPAREN());
             consume(cmp, TOK_SEMI());
             
             // Check for builtins
-            if name_is(cmp.cmp_source, name_start, name_len, "put_str\0", 7) {
+            if name_is(cmp.cmp_source, stmt_name_start, stmt_name_len, "put_str\0", 7) {
                 pos = emit_str(out, pos, "    ldr x2, [sp], #16\n", 22);
                 pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
                 pos = emit_str(out, pos, "    mov x0, #1\n", 15);
@@ -1369,7 +1459,7 @@ fn parse_statement(cmp, out, pos) {
                 pos = emit_str(out, pos, "    svc #0\n", 11);
                 return pos;
             }
-            if name_is(cmp.cmp_source, name_start, name_len, "put_char\0", 8) {
+            if name_is(cmp.cmp_source, stmt_name_start, stmt_name_len, "put_char\0", 8) {
                 pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
                 pos = emit_str(out, pos, "    str x1, [sp, #-16]!\n", 24);
                 pos = emit_str(out, pos, "    mov x0, #1\n", 15);
@@ -1380,20 +1470,62 @@ fn parse_statement(cmp, out, pos) {
                 pos = emit_str(out, pos, "    add sp, sp, #16\n", 20);
                 return pos;
             }
+            // poke(addr, val) - write 8 bytes to address
+            if name_is(cmp.cmp_source, stmt_name_start, stmt_name_len, "poke\0", 4) {
+                pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
+                pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);
+                pos = emit_str(out, pos, "    str x1, [x0]\n", 17);
+                return pos;
+            }
+            // str_copy(dest, src, len) - copy bytes
+            if name_is(cmp.cmp_source, stmt_name_start, stmt_name_len, "str_copy\0", 8) {
+                let stmt_strcpy_loop = cmp.cmp_label_count;
+                cmp.cmp_label_count = cmp.cmp_label_count + 1;
+                let stmt_strcpy_done = cmp.cmp_label_count;
+                cmp.cmp_label_count = cmp.cmp_label_count + 1;
+                
+                pos = emit_str(out, pos, "    ldr x2, [sp], #16\n", 22);
+                pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
+                pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);
+                pos = emit_str(out, pos, ".L", 2);
+                pos = emit_int(out, pos, stmt_strcpy_loop);
+                pos = emit_str(out, pos, ":\n", 2);
+                pos = emit_str(out, pos, "    cbz x2, .L", 14);
+                pos = emit_int(out, pos, stmt_strcpy_done);
+                pos = emit_str(out, pos, "\n", 1);
+                pos = emit_str(out, pos, "    ldrb w3, [x1], #1\n", 22);
+                pos = emit_str(out, pos, "    strb w3, [x0], #1\n", 22);
+                pos = emit_str(out, pos, "    sub x2, x2, #1\n", 19);
+                pos = emit_str(out, pos, "    b .L", 8);
+                pos = emit_int(out, pos, stmt_strcpy_loop);
+                pos = emit_str(out, pos, "\n", 1);
+                pos = emit_str(out, pos, ".L", 2);
+                pos = emit_int(out, pos, stmt_strcpy_done);
+                pos = emit_str(out, pos, ":\n", 2);
+                return pos;
+            }
+            // write_file(filename, content, length)
+            if name_is(cmp.cmp_source, stmt_name_start, stmt_name_len, "write_file\0", 10) {
+                pos = emit_str(out, pos, "    ldr x2, [sp], #16\n", 22);
+                pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
+                pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);
+                pos = emit_str(out, pos, "    bl _builtin_write_file\n", 27);
+                return pos;
+            }
             
             // Regular function call
-            if arg_count >= 1 {
-                let r = arg_count - 1;
-                while r >= 0 {
+            if stmt_arg_cnt >= 1 {
+                let stmt_reg = stmt_arg_cnt - 1;
+                while stmt_reg >= 0 {
                     pos = emit_str(out, pos, "    ldr x", 9);
-                    pos = emit_int(out, pos, r);
+                    pos = emit_int(out, pos, stmt_reg);
                     pos = emit_str(out, pos, ", [sp], #16\n", 12);
-                    r = r - 1;
+                    stmt_reg = stmt_reg - 1;
                 }
             }
             pos = emit_str(out, pos, "    bl ", 7);
-            str_copy(out + pos, cmp.cmp_source + name_start, name_len);
-            pos = pos + name_len;
+            str_copy(out + pos, cmp.cmp_source + stmt_name_start, stmt_name_len);
+            pos = pos + stmt_name_len;
             pos = emit_str(out, pos, "\n", 1);
             return pos;
         }
@@ -1414,43 +1546,43 @@ fn parse_statement(cmp, out, pos) {
 // Parse function definition: fn name(params) { body }
 fn parse_function(cmp, out, pos) {
     consume(cmp, TOK_IDENT());
-    let name_start = cmp.cmp_prev_start;
-    let name_len = cmp.cmp_prev_len;
+    let fn_name_start = cmp.cmp_prev_start;
+    let fn_name_len = cmp.cmp_prev_len;
     
     // Clear symbol table for this function
     sym_clear(cmp);
     
     // Emit function label
     pos = emit_str(out, pos, "\n", 1);
-    str_copy(out + pos, cmp.cmp_source + name_start, name_len);
-    pos = pos + name_len;
+    str_copy(out + pos, cmp.cmp_source + fn_name_start, fn_name_len);
+    pos = pos + fn_name_len;
     pos = emit_str(out, pos, ":\n", 2);
     
     // Prologue
     pos = emit_str(out, pos, "    stp x29, x30, [sp, #-16]!\n", 30);
     pos = emit_str(out, pos, "    mov x29, sp\n", 16);
-    pos = emit_str(out, pos, "    sub sp, sp, #256\n", 21);
+    pos = emit_str(out, pos, "    sub sp, sp, #512\n", 21);
     
     // Parse parameters
     consume(cmp, TOK_LPAREN());
-    let param_idx = 0;
+    let fn_param_idx = 0;
     if !check(cmp, TOK_RPAREN()) {
         // First param
         consume(cmp, TOK_IDENT());
-        let pstart = cmp.cmp_prev_start;
-        let plen = cmp.cmp_prev_len;
-        let offset = sym_add(cmp, pstart, plen);
-        pos = emit_str_fp_n(out, pos, param_idx, offset);
-        param_idx = param_idx + 1;
+        let fn_pstart = cmp.cmp_prev_start;
+        let fn_plen = cmp.cmp_prev_len;
+        let fn_poff = sym_add(cmp, fn_pstart, fn_plen);
+        pos = emit_str_fp_n(out, pos, fn_param_idx, fn_poff);
+        fn_param_idx = fn_param_idx + 1;
         
         while check(cmp, TOK_COMMA()) {
             next_token(cmp);  // consume ','
             consume(cmp, TOK_IDENT());
-            pstart = cmp.cmp_prev_start;
-            plen = cmp.cmp_prev_len;
-            offset = sym_add(cmp, pstart, plen);
-            pos = emit_str_fp_n(out, pos, param_idx, offset);
-            param_idx = param_idx + 1;
+            fn_pstart = cmp.cmp_prev_start;
+            fn_plen = cmp.cmp_prev_len;
+            fn_poff = sym_add(cmp, fn_pstart, fn_plen);
+            pos = emit_str_fp_n(out, pos, fn_param_idx, fn_poff);
+            fn_param_idx = fn_param_idx + 1;
         }
     }
     consume(cmp, TOK_RPAREN());
@@ -1648,43 +1780,43 @@ fn emit_data(cmp, out, pos) {
     
     pos = emit_str(out, pos, "\n.data\n", 7);
     
-    let i = 0;
-    while i < cmp.cmp_str_count {
+    let data_str_idx = 0;
+    while data_str_idx < cmp.cmp_str_count {
         // Emit label
         pos = emit_str(out, pos, ".str", 4);
-        pos = emit_int(out, pos, i);
+        pos = emit_int(out, pos, data_str_idx);
         pos = emit_str(out, pos, ":\n    .ascii \"", 14);
         
         // Emit string content (with escape handling)
-        let str_start = arr_get(cmp.cmp_str_starts, i);
-        let str_len = arr_get(cmp.cmp_str_lens, i);
-        let j = 0;
-        while j < str_len {
-            let c = char_at(cmp.cmp_source, str_start + j);
+        let data_str_start = arr_get(cmp.cmp_str_starts, data_str_idx);
+        let data_str_len = arr_get(cmp.cmp_str_lens, data_str_idx);
+        let data_char_idx = 0;
+        while data_char_idx < data_str_len {
+            let data_ch = char_at(cmp.cmp_source, data_str_start + data_char_idx);
             // Handle escape sequences in source
-            if c == 92 {  // backslash
-                j = j + 1;
-                if j < str_len {
-                    let next = char_at(cmp.cmp_source, str_start + j);
-                    if next == 110 {  // 'n'
+            if data_ch == 92 {  // backslash
+                data_char_idx = data_char_idx + 1;
+                if data_char_idx < data_str_len {
+                    let esc_next = char_at(cmp.cmp_source, data_str_start + data_char_idx);
+                    if esc_next == 110 {  // 'n'
                         pos = emit_str(out, pos, "\\n", 2);
                     } else {
-                        if next == 116 {  // 't'
+                        if esc_next == 116 {  // 't'
                             pos = emit_str(out, pos, "\\t", 2);
                         } else {
-                            if next == 48 {  // '0'
+                            if esc_next == 48 {  // '0'
                                 pos = emit_str(out, pos, "\\0", 2);
                             } else {
-                                if next == 92 {  // '\\'
+                                if esc_next == 92 {  // '\\'
                                     pos = emit_str(out, pos, "\\\\", 2);
                                 } else {
-                                    if next == 34 {  // '"'
+                                    if esc_next == 34 {  // '"'
                                         pos = emit_str(out, pos, "\\\"", 2);
                                     } else {
                                         // Unknown escape, emit as-is
-                                        poke(out + pos, c);
+                                        poke(out + pos, data_ch);
                                         pos = pos + 1;
-                                        poke(out + pos, next);
+                                        poke(out + pos, esc_next);
                                         pos = pos + 1;
                                     }
                                 }
@@ -1693,14 +1825,14 @@ fn emit_data(cmp, out, pos) {
                     }
                 }
             } else {
-                poke(out + pos, c);
+                poke(out + pos, data_ch);
                 pos = pos + 1;
             }
-            j = j + 1;
+            data_char_idx = data_char_idx + 1;
         }
         
         pos = emit_str(out, pos, "\\0\"\n", 4);  // null terminate
-        i = i + 1;
+        data_str_idx = data_str_idx + 1;
     }
     
     return pos;
@@ -1709,22 +1841,22 @@ fn emit_data(cmp, out, pos) {
 // Parse struct definition: struct Name { field1, field2, ... }
 fn parse_struct_def(cmp) {
     consume(cmp, TOK_IDENT());
-    let name_start = cmp.cmp_prev_start;
-    let name_len = cmp.cmp_prev_len;
+    let struct_nm_start = cmp.cmp_prev_start;
+    let struct_nm_len = cmp.cmp_prev_len;
     
-    let struct_idx = struct_add(cmp, name_start, name_len);
+    let struct_def_idx = struct_add(cmp, struct_nm_start, struct_nm_len);
     
     consume(cmp, TOK_LBRACE());
     
     // Parse fields
     if !check(cmp, TOK_RBRACE()) {
         consume(cmp, TOK_IDENT());
-        struct_add_field(cmp, struct_idx, cmp.cmp_prev_start, cmp.cmp_prev_len);
+        struct_add_field(cmp, struct_def_idx, cmp.cmp_prev_start, cmp.cmp_prev_len);
         
         while check(cmp, TOK_COMMA()) {
             next_token(cmp);  // consume ','
             consume(cmp, TOK_IDENT());
-            struct_add_field(cmp, struct_idx, cmp.cmp_prev_start, cmp.cmp_prev_len);
+            struct_add_field(cmp, struct_def_idx, cmp.cmp_prev_start, cmp.cmp_prev_len);
         }
     }
     
@@ -1752,18 +1884,18 @@ fn parse_program(cmp, out, pos) {
 
 // Compile a complete program with runtime
 fn compile(cmp, out) {
-    let pos = 0;
+    let compile_pos = 0;
     
-    pos = emit_header(out, pos);
-    pos = emit_runtime(out, pos);
+    compile_pos = emit_header(out, compile_pos);
+    compile_pos = emit_runtime(out, compile_pos);
     
     next_token(cmp);
-    pos = parse_program(cmp, out, pos);
+    compile_pos = parse_program(cmp, out, compile_pos);
     
-    pos = emit_start(out, pos);
-    pos = emit_data(cmp, out, pos);
+    compile_pos = emit_start(out, compile_pos);
+    compile_pos = emit_data(cmp, out, compile_pos);
     
-    return pos;
+    return compile_pos;
 }
 
 // ============ MAIN ============
@@ -1809,14 +1941,14 @@ fn main() {
     // Initialize symbol table
     sym_init(cmp);
     
-    // Allocate output buffer (128KB for large programs)
-    let out = alloc(131072);
+    // Allocate output buffer (512KB for large programs)
+    let main_out = alloc(524288);
     
     // Compile
-    let pos = compile(cmp, out);
+    let main_len = compile(cmp, main_out);
     
     // Write generated code to file
-    write_file(output_file, out, pos);
+    write_file(output_file, main_out, main_len);
     
     if cmp.cmp_had_error {
         print "Compilation failed!";
