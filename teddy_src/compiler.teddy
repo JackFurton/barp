@@ -1,0 +1,1380 @@
+// Teddy Compiler - Single-pass compiler
+// Emits ARM64 assembly while parsing
+//
+// This is a simplified compiler that:
+// 1. Reads source file
+// 2. Tokenizes on-the-fly
+// 3. Parses and emits code in one pass
+//
+// Limitations:
+// - No forward declarations (functions must be defined before use)
+// - Simpler expressions
+// - Direct code emission
+
+// Include the lexer (we'll combine these later)
+// For now, we define token constants inline
+
+// ============ TOKEN TYPES ============
+fn TOK_LPAREN() { return 0; }
+fn TOK_RPAREN() { return 1; }
+fn TOK_LBRACE() { return 2; }
+fn TOK_RBRACE() { return 3; }
+fn TOK_LBRACKET() { return 4; }
+fn TOK_RBRACKET() { return 5; }
+fn TOK_SEMI() { return 6; }
+fn TOK_COMMA() { return 7; }
+fn TOK_DOT() { return 8; }
+fn TOK_COLON() { return 9; }
+fn TOK_PLUS() { return 10; }
+fn TOK_MINUS() { return 11; }
+fn TOK_STAR() { return 12; }
+fn TOK_SLASH() { return 13; }
+fn TOK_PERCENT() { return 14; }
+fn TOK_EQ() { return 15; }
+fn TOK_EQEQ() { return 16; }
+fn TOK_BANG() { return 17; }
+fn TOK_BANGEQ() { return 18; }
+fn TOK_LT() { return 19; }
+fn TOK_LE() { return 20; }
+fn TOK_GT() { return 21; }
+fn TOK_GE() { return 22; }
+fn TOK_AND() { return 23; }
+fn TOK_OR() { return 24; }
+fn TOK_INT() { return 25; }
+fn TOK_STRING() { return 26; }
+fn TOK_IDENT() { return 27; }
+fn TOK_FN() { return 28; }
+fn TOK_LET() { return 29; }
+fn TOK_STRUCT() { return 30; }
+fn TOK_IF() { return 31; }
+fn TOK_ELSE() { return 32; }
+fn TOK_WHILE() { return 33; }
+fn TOK_RETURN() { return 34; }
+fn TOK_PRINT() { return 35; }
+fn TOK_TRUE() { return 36; }
+fn TOK_FALSE() { return 37; }
+fn TOK_EOF() { return 38; }
+fn TOK_ERROR() { return 39; }
+
+// ============ SYMBOL TABLE ============
+// Using peek/poke for dynamic array access
+// Each local: [name_start, name_len, stack_offset] stored in 3 parallel arrays
+
+fn MAX_LOCALS() { return 64; }
+
+// Helper: get/set values in an array (8-byte elements)
+fn arr_get(arr, index) {
+    return peek(arr + index * 8);
+}
+
+fn arr_set(arr, index, value) {
+    poke(arr + index * 8, value);
+    return 0;
+}
+
+// ============ COMPILER STATE ============
+struct Compiler {
+    // Source
+    cmp_source,
+    cmp_source_len,
+    // Lexer state  
+    cmp_start,
+    cmp_current,
+    cmp_line,
+    // Current/previous token
+    cmp_tok_type,
+    cmp_tok_start,
+    cmp_tok_len,
+    cmp_prev_type,
+    cmp_prev_start,
+    cmp_prev_len,
+    // Code generation
+    cmp_label_count,
+    cmp_stack_offset,
+    // Symbol table
+    cmp_sym_starts,    // array of name start positions
+    cmp_sym_lens,      // array of name lengths
+    cmp_sym_offsets,   // array of stack offsets
+    cmp_sym_count,     // number of locals
+    // String table (for data section)
+    cmp_str_starts,    // array of string start positions in source
+    cmp_str_lens,      // array of string lengths
+    cmp_str_count,     // number of strings
+    // Error handling
+    cmp_had_error
+}
+
+fn MAX_STRINGS() { return 64; }
+
+// ============ OUTPUT HELPERS ============
+// For now, we'll just print assembly to stdout
+// Later we can write to a file
+
+fn emit_raw(s) {
+    print s;
+    return 0;
+}
+
+fn emit_indent(s) {
+    // We'd want "    " prefix, but for now just print
+    print s;
+    return 0;
+}
+
+// ============ LEXER (INLINE) ============
+fn is_digit(c) {
+    return c >= 48 && c <= 57;
+}
+
+fn is_alpha(c) {
+    if c >= 65 && c <= 90 { return 1; }
+    if c >= 97 && c <= 122 { return 1; }
+    if c == 95 { return 1; }
+    return 0;
+}
+
+fn is_alnum(c) {
+    return is_alpha(c) || is_digit(c);
+}
+
+fn lex_at_end(cmp) {
+    return cmp.cmp_current >= cmp.cmp_source_len;
+}
+
+fn lex_advance(cmp) {
+    let c = char_at(cmp.cmp_source, cmp.cmp_current);
+    cmp.cmp_current = cmp.cmp_current + 1;
+    return c;
+}
+
+fn lex_peek(cmp) {
+    if lex_at_end(cmp) { return 0; }
+    return char_at(cmp.cmp_source, cmp.cmp_current);
+}
+
+fn lex_peek_next(cmp) {
+    if cmp.cmp_current + 1 >= cmp.cmp_source_len { return 0; }
+    return char_at(cmp.cmp_source, cmp.cmp_current + 1);
+}
+
+fn lex_match(cmp, expected) {
+    if lex_at_end(cmp) { return 0; }
+    if char_at(cmp.cmp_source, cmp.cmp_current) != expected { return 0; }
+    cmp.cmp_current = cmp.cmp_current + 1;
+    return 1;
+}
+
+fn skip_whitespace(cmp) {
+    while 1 {
+        if lex_at_end(cmp) { return 0; }
+        let c = lex_peek(cmp);
+        if c == 32 || c == 9 || c == 13 {
+            lex_advance(cmp);
+        } else {
+            if c == 10 {
+                cmp.cmp_line = cmp.cmp_line + 1;
+                lex_advance(cmp);
+            } else {
+                if c == 47 && lex_peek_next(cmp) == 47 {
+                    while !lex_at_end(cmp) && lex_peek(cmp) != 10 {
+                        lex_advance(cmp);
+                    }
+                } else {
+                    return 0;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+fn make_token(cmp, tok_type) {
+    cmp.cmp_tok_type = tok_type;
+    cmp.cmp_tok_start = cmp.cmp_start;
+    cmp.cmp_tok_len = cmp.cmp_current - cmp.cmp_start;
+    return 0;
+}
+
+fn check_keyword(cmp, kw_start, kw_len, rest, kw_type) {
+    let tok_len = cmp.cmp_current - cmp.cmp_start;
+    if tok_len != kw_start + kw_len { return TOK_IDENT(); }
+    let i = 0;
+    while i < kw_len {
+        if char_at(cmp.cmp_source, cmp.cmp_start + kw_start + i) != char_at(rest, i) {
+            return TOK_IDENT();
+        }
+        i = i + 1;
+    }
+    return kw_type;
+}
+
+fn ident_type(cmp) {
+    let c = char_at(cmp.cmp_source, cmp.cmp_start);
+    if c == 101 { return check_keyword(cmp, 1, 3, "lse\0", TOK_ELSE()); }
+    if c == 102 {
+        if cmp.cmp_current - cmp.cmp_start > 1 {
+            let c2 = char_at(cmp.cmp_source, cmp.cmp_start + 1);
+            if c2 == 97 { return check_keyword(cmp, 2, 3, "lse\0", TOK_FALSE()); }
+            if c2 == 110 { return check_keyword(cmp, 2, 0, "\0", TOK_FN()); }
+        }
+    }
+    if c == 105 { return check_keyword(cmp, 1, 1, "f\0", TOK_IF()); }
+    if c == 108 { return check_keyword(cmp, 1, 2, "et\0", TOK_LET()); }
+    if c == 112 { return check_keyword(cmp, 1, 4, "rint\0", TOK_PRINT()); }
+    if c == 114 { return check_keyword(cmp, 1, 5, "eturn\0", TOK_RETURN()); }
+    if c == 115 { return check_keyword(cmp, 1, 5, "truct\0", TOK_STRUCT()); }
+    if c == 116 { return check_keyword(cmp, 1, 3, "rue\0", TOK_TRUE()); }
+    if c == 119 { return check_keyword(cmp, 1, 4, "hile\0", TOK_WHILE()); }
+    return TOK_IDENT();
+}
+
+fn scan_ident(cmp) {
+    while is_alnum(lex_peek(cmp)) {
+        lex_advance(cmp);
+    }
+    make_token(cmp, ident_type(cmp));
+    return 0;
+}
+
+fn scan_number(cmp) {
+    while is_digit(lex_peek(cmp)) {
+        lex_advance(cmp);
+    }
+    make_token(cmp, TOK_INT());
+    return 0;
+}
+
+fn scan_string(cmp) {
+    while !lex_at_end(cmp) && lex_peek(cmp) != 34 {
+        if lex_peek(cmp) == 10 {
+            cmp.cmp_line = cmp.cmp_line + 1;
+        }
+        lex_advance(cmp);
+    }
+    if lex_at_end(cmp) {
+        make_token(cmp, TOK_ERROR());
+        return 0;
+    }
+    lex_advance(cmp);
+    make_token(cmp, TOK_STRING());
+    return 0;
+}
+
+fn next_token(cmp) {
+    // Save previous token
+    cmp.cmp_prev_type = cmp.cmp_tok_type;
+    cmp.cmp_prev_start = cmp.cmp_tok_start;
+    cmp.cmp_prev_len = cmp.cmp_tok_len;
+    
+    skip_whitespace(cmp);
+    cmp.cmp_start = cmp.cmp_current;
+    
+    if lex_at_end(cmp) {
+        make_token(cmp, TOK_EOF());
+        return 0;
+    }
+    
+    let c = lex_advance(cmp);
+    
+    if is_alpha(c) { scan_ident(cmp); return 0; }
+    if is_digit(c) { scan_number(cmp); return 0; }
+    
+    if c == 40 { make_token(cmp, TOK_LPAREN()); return 0; }
+    if c == 41 { make_token(cmp, TOK_RPAREN()); return 0; }
+    if c == 123 { make_token(cmp, TOK_LBRACE()); return 0; }
+    if c == 125 { make_token(cmp, TOK_RBRACE()); return 0; }
+    if c == 91 { make_token(cmp, TOK_LBRACKET()); return 0; }
+    if c == 93 { make_token(cmp, TOK_RBRACKET()); return 0; }
+    if c == 59 { make_token(cmp, TOK_SEMI()); return 0; }
+    if c == 44 { make_token(cmp, TOK_COMMA()); return 0; }
+    if c == 46 { make_token(cmp, TOK_DOT()); return 0; }
+    if c == 58 { make_token(cmp, TOK_COLON()); return 0; }
+    if c == 43 { make_token(cmp, TOK_PLUS()); return 0; }
+    if c == 45 { make_token(cmp, TOK_MINUS()); return 0; }
+    if c == 42 { make_token(cmp, TOK_STAR()); return 0; }
+    if c == 47 { make_token(cmp, TOK_SLASH()); return 0; }
+    if c == 37 { make_token(cmp, TOK_PERCENT()); return 0; }
+    
+    if c == 61 {
+        if lex_match(cmp, 61) { make_token(cmp, TOK_EQEQ()); return 0; }
+        make_token(cmp, TOK_EQ());
+        return 0;
+    }
+    if c == 33 {
+        if lex_match(cmp, 61) { make_token(cmp, TOK_BANGEQ()); return 0; }
+        make_token(cmp, TOK_BANG());
+        return 0;
+    }
+    if c == 60 {
+        if lex_match(cmp, 61) { make_token(cmp, TOK_LE()); return 0; }
+        make_token(cmp, TOK_LT());
+        return 0;
+    }
+    if c == 62 {
+        if lex_match(cmp, 61) { make_token(cmp, TOK_GE()); return 0; }
+        make_token(cmp, TOK_GT());
+        return 0;
+    }
+    if c == 38 {
+        if lex_match(cmp, 38) { make_token(cmp, TOK_AND()); return 0; }
+    }
+    if c == 124 {
+        if lex_match(cmp, 124) { make_token(cmp, TOK_OR()); return 0; }
+    }
+    if c == 34 {
+        scan_string(cmp);
+        return 0;
+    }
+    
+    make_token(cmp, TOK_ERROR());
+    return 0;
+}
+
+// ============ PARSER HELPERS ============
+fn check(cmp, tok_type) {
+    return cmp.cmp_tok_type == tok_type;
+}
+
+fn match_tok(cmp, tok_type) {
+    if !check(cmp, tok_type) { return 0; }
+    next_token(cmp);
+    return 1;
+}
+
+fn consume(cmp, tok_type) {
+    if cmp.cmp_tok_type == tok_type {
+        next_token(cmp);
+        return 1;
+    }
+    cmp.cmp_had_error = 1;
+    print "Parse error!";
+    return 0;
+}
+
+// ============ SYMBOL TABLE ============
+
+fn sym_init(cmp) {
+    cmp.cmp_sym_starts = alloc(MAX_LOCALS() * 8);
+    cmp.cmp_sym_lens = alloc(MAX_LOCALS() * 8);
+    cmp.cmp_sym_offsets = alloc(MAX_LOCALS() * 8);
+    cmp.cmp_sym_count = 0;
+    cmp.cmp_stack_offset = 0;
+    // Initialize string table
+    cmp.cmp_str_starts = alloc(MAX_STRINGS() * 8);
+    cmp.cmp_str_lens = alloc(MAX_STRINGS() * 8);
+    cmp.cmp_str_count = 0;
+    return 0;
+}
+
+fn sym_clear(cmp) {
+    cmp.cmp_sym_count = 0;
+    cmp.cmp_stack_offset = 0;
+    return 0;
+}
+
+// Add a new local variable, returns its stack offset
+fn sym_add(cmp, name_start, name_len) {
+    let idx = cmp.cmp_sym_count;
+    cmp.cmp_stack_offset = cmp.cmp_stack_offset - 8;
+    
+    arr_set(cmp.cmp_sym_starts, idx, name_start);
+    arr_set(cmp.cmp_sym_lens, idx, name_len);
+    arr_set(cmp.cmp_sym_offsets, idx, cmp.cmp_stack_offset);
+    
+    cmp.cmp_sym_count = cmp.cmp_sym_count + 1;
+    return cmp.cmp_stack_offset;
+}
+
+// Compare two strings in source
+fn str_eq(src, start1, len1, start2, len2) {
+    if len1 != len2 { return 0; }
+    let i = 0;
+    while i < len1 {
+        let c1 = char_at(src, start1 + i);
+        let c2 = char_at(src, start2 + i);
+        print c1;  // DEBUG
+        print c2;  // DEBUG
+        if c1 != c2 {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+// Find a local variable, returns stack offset or 0 if not found
+fn sym_find(cmp, name_start, name_len) {
+    print cmp.cmp_sym_count;  // DEBUG
+    print name_start;  // DEBUG
+    print name_len;    // DEBUG
+    let i = 0;
+    while i < cmp.cmp_sym_count {
+        let s = arr_get(cmp.cmp_sym_starts, i);
+        let l = arr_get(cmp.cmp_sym_lens, i);
+        print s;  // DEBUG
+        print l;  // DEBUG
+        let eq = str_eq(cmp.cmp_source, name_start, name_len, s, l);
+        print eq;  // DEBUG - should be 1 if equal
+        if eq {
+            print 999;  // DEBUG - should see this if match found
+            let off = arr_get(cmp.cmp_sym_offsets, i);
+            print off;  // DEBUG - should be -8
+            return off;
+        }
+        i = i + 1;
+    }
+    return 0;  // Not found
+}
+
+// Check if name matches a literal string (for builtin detection)
+fn name_is(src, start, len, literal, lit_len) {
+    if len != lit_len { return 0; }
+    let i = 0;
+    while i < len {
+        if char_at(src, start + i) != char_at(literal, i) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+// ============ CODE EMISSION ============
+// Write assembly to output buffer
+
+fn emit_str(out, pos, s, slen) {
+    str_copy(out + pos, s, slen);
+    return pos + slen;
+}
+
+fn emit_int(out, pos, n) {
+    let len = int_to_str(out + pos, n);
+    return pos + len;
+}
+
+fn emit_line(out, pos, s, slen) {
+    pos = emit_str(out, pos, "    ", 4);
+    pos = emit_str(out, pos, s, slen);
+    pos = emit_str(out, pos, "\n", 1);
+    return pos;
+}
+
+fn emit_label(out, pos, prefix, num) {
+    pos = emit_str(out, pos, prefix, 2);
+    pos = emit_int(out, pos, num);
+    pos = emit_str(out, pos, ":\n", 2);
+    return pos;
+}
+
+// ============ EXPRESSION PARSING ============
+// Forward declaration needed - we'll call expression() recursively
+
+// Parse integer literal - result in x0
+fn parse_int_literal(cmp, out, pos) {
+    // Extract the integer value from the token
+    let val = 0;
+    let i = cmp.cmp_prev_start;
+    let end = cmp.cmp_prev_start + cmp.cmp_prev_len;
+    while i < end {
+        let c = char_at(cmp.cmp_source, i);
+        val = val * 10 + (c - 48);
+        i = i + 1;
+    }
+    
+    // Emit: mov x0, #val
+    pos = emit_str(out, pos, "    mov x0, #", 13);
+    pos = emit_int(out, pos, val);
+    pos = emit_str(out, pos, "\n", 1);
+    return pos;
+}
+
+// Parse primary expression
+fn parse_primary(cmp, out, pos) {
+    if match_tok(cmp, TOK_INT()) {
+        return parse_int_literal(cmp, out, pos);
+    }
+    
+    if match_tok(cmp, TOK_TRUE()) {
+        pos = emit_str(out, pos, "    mov x0, #1\n", 15);
+        return pos;
+    }
+    
+    if match_tok(cmp, TOK_FALSE()) {
+        pos = emit_str(out, pos, "    mov x0, #0\n", 15);
+        return pos;
+    }
+    
+    // String literal: "..."
+    if match_tok(cmp, TOK_STRING()) {
+        // Record string in string table
+        // Token includes quotes, so actual string is from prev_start+1 to prev_start+prev_len-1
+        let str_start = cmp.cmp_prev_start + 1;
+        let str_len = cmp.cmp_prev_len - 2;  // exclude both quotes
+        let str_idx = cmp.cmp_str_count;
+        
+        arr_set(cmp.cmp_str_starts, str_idx, str_start);
+        arr_set(cmp.cmp_str_lens, str_idx, str_len);
+        cmp.cmp_str_count = cmp.cmp_str_count + 1;
+        
+        // Emit: adrp x0, .str{N}; add x0, x0, :lo12:.str{N}
+        pos = emit_str(out, pos, "    adrp x0, .str", 17);
+        pos = emit_int(out, pos, str_idx);
+        pos = emit_str(out, pos, "\n", 1);
+        pos = emit_str(out, pos, "    add x0, x0, :lo12:.str", 26);
+        pos = emit_int(out, pos, str_idx);
+        pos = emit_str(out, pos, "\n", 1);
+        
+        return pos;
+    }
+    
+    if match_tok(cmp, TOK_LPAREN()) {
+        pos = parse_expression(cmp, out, pos);
+        consume(cmp, TOK_RPAREN());
+        return pos;
+    }
+    
+    // Array literal: [expr, expr, ...]
+    if match_tok(cmp, TOK_LBRACKET()) {
+        // First, count and parse all elements onto stack
+        let elem_count = 0;
+        if !check(cmp, TOK_RBRACKET()) {
+            pos = parse_expression(cmp, out, pos);
+            pos = emit_str(out, pos, "    str x0, [sp, #-16]!\n", 24);
+            elem_count = elem_count + 1;
+            
+            while check(cmp, TOK_COMMA()) {
+                next_token(cmp);
+                pos = parse_expression(cmp, out, pos);
+                pos = emit_str(out, pos, "    str x0, [sp, #-16]!\n", 24);
+                elem_count = elem_count + 1;
+            }
+        }
+        consume(cmp, TOK_RBRACKET());
+        
+        // Allocate array in local area: [len][elem0][elem1]...
+        // We need (elem_count + 1) * 8 bytes
+        let arr_size = (elem_count + 1) * 8;
+        cmp.cmp_stack_offset = cmp.cmp_stack_offset - arr_size;
+        let arr_offset = cmp.cmp_stack_offset;
+        
+        // Store length
+        pos = emit_str(out, pos, "    mov x1, #", 13);
+        pos = emit_int(out, pos, elem_count);
+        pos = emit_str(out, pos, "\n", 1);
+        pos = emit_str(out, pos, "    str x1, [x29, #", 19);
+        pos = emit_int(out, pos, arr_offset);
+        pos = emit_str(out, pos, "]\n", 2);
+        
+        // Pop elements from stack in reverse order into array slots
+        // Elements were pushed in order, so last element is on top
+        let i = elem_count - 1;
+        while i >= 0 {
+            pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
+            pos = emit_str(out, pos, "    str x1, [x29, #", 19);
+            pos = emit_int(out, pos, arr_offset + 8 + i * 8);
+            pos = emit_str(out, pos, "]\n", 2);
+            i = i - 1;
+        }
+        
+        // Return pointer to array (address of length slot)
+        pos = emit_str(out, pos, "    add x0, x29, #", 18);
+        pos = emit_int(out, pos, arr_offset);
+        pos = emit_str(out, pos, "\n", 1);
+        
+        return pos;
+    }
+    
+    if match_tok(cmp, TOK_IDENT()) {
+        let name_start = cmp.cmp_prev_start;
+        let name_len = cmp.cmp_prev_len;
+        
+        // Check for function call: ident(args)
+        if check(cmp, TOK_LPAREN()) {
+            next_token(cmp);  // consume '('
+            
+            // Parse arguments and push to stack
+            let arg_count = 0;
+            if !check(cmp, TOK_RPAREN()) {
+                // First argument
+                pos = parse_expression(cmp, out, pos);
+                pos = emit_str(out, pos, "    str x0, [sp, #-16]!\n", 24);
+                arg_count = arg_count + 1;
+                
+                while check(cmp, TOK_COMMA()) {
+                    next_token(cmp);  // consume ','
+                    pos = parse_expression(cmp, out, pos);
+                    pos = emit_str(out, pos, "    str x0, [sp, #-16]!\n", 24);
+                    arg_count = arg_count + 1;
+                }
+            }
+            consume(cmp, TOK_RPAREN());
+            
+            // Check for builtins and emit inline code
+            // put_str(ptr, len) - write string to stdout
+            if name_is(cmp.cmp_source, name_start, name_len, "put_str\0", 7) {
+                pos = emit_str(out, pos, "    ldr x2, [sp], #16\n", 22);  // len
+                pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);  // ptr
+                pos = emit_str(out, pos, "    mov x0, #1\n", 15);          // stdout
+                pos = emit_str(out, pos, "    mov x8, #64\n", 16);         // sys_write
+                pos = emit_str(out, pos, "    svc #0\n", 11);
+                return pos;
+            }
+            
+            // put_char(c) - write single char to stdout
+            if name_is(cmp.cmp_source, name_start, name_len, "put_char\0", 8) {
+                pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
+                pos = emit_str(out, pos, "    str x1, [sp, #-16]!\n", 24);
+                pos = emit_str(out, pos, "    mov x0, #1\n", 15);
+                pos = emit_str(out, pos, "    mov x1, sp\n", 15);
+                pos = emit_str(out, pos, "    mov x2, #1\n", 15);
+                pos = emit_str(out, pos, "    mov x8, #64\n", 16);
+                pos = emit_str(out, pos, "    svc #0\n", 11);
+                pos = emit_str(out, pos, "    add sp, sp, #16\n", 20);
+                return pos;
+            }
+            
+            // char_at(str, idx) - get character at index
+            if name_is(cmp.cmp_source, name_start, name_len, "char_at\0", 7) {
+                pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);  // idx
+                pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);  // str
+                pos = emit_str(out, pos, "    ldrb w0, [x0, x1]\n", 22);
+                return pos;
+            }
+            
+            // alloc(size) - allocate memory via mmap
+            if name_is(cmp.cmp_source, name_start, name_len, "alloc\0", 5) {
+                pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);  // size
+                pos = emit_str(out, pos, "    mov x0, #0\n", 15);          // addr = NULL
+                pos = emit_str(out, pos, "    mov x2, #3\n", 15);          // PROT_READ|PROT_WRITE
+                pos = emit_str(out, pos, "    mov x3, #0x22\n", 18);       // MAP_PRIVATE|MAP_ANONYMOUS
+                pos = emit_str(out, pos, "    mov x4, #-1\n", 16);         // fd
+                pos = emit_str(out, pos, "    mov x5, #0\n", 15);          // offset
+                pos = emit_str(out, pos, "    mov x8, #222\n", 17);        // sys_mmap
+                pos = emit_str(out, pos, "    svc #0\n", 11);
+                return pos;
+            }
+            
+            // peek(addr) - read 8 bytes from address
+            if name_is(cmp.cmp_source, name_start, name_len, "peek\0", 4) {
+                pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);
+                pos = emit_str(out, pos, "    ldr x0, [x0]\n", 17);
+                return pos;
+            }
+            
+            // poke(addr, val) - write 8 bytes to address
+            if name_is(cmp.cmp_source, name_start, name_len, "poke\0", 4) {
+                pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);  // val
+                pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);  // addr
+                pos = emit_str(out, pos, "    str x1, [x0]\n", 17);
+                return pos;
+            }
+            
+            // str_copy(dest, src, len) - copy bytes
+            if name_is(cmp.cmp_source, name_start, name_len, "str_copy\0", 8) {
+                let cp_label = cmp.cmp_label_count;
+                cmp.cmp_label_count = cmp.cmp_label_count + 1;
+                let done_label = cmp.cmp_label_count;
+                cmp.cmp_label_count = cmp.cmp_label_count + 1;
+                
+                pos = emit_str(out, pos, "    ldr x2, [sp], #16\n", 22);  // len
+                pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);  // src
+                pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);  // dest
+                pos = emit_str(out, pos, ".L", 2);
+                pos = emit_int(out, pos, cp_label);
+                pos = emit_str(out, pos, ":\n", 2);
+                pos = emit_str(out, pos, "    cbz x2, .L", 14);
+                pos = emit_int(out, pos, done_label);
+                pos = emit_str(out, pos, "\n", 1);
+                pos = emit_str(out, pos, "    ldrb w3, [x1], #1\n", 22);
+                pos = emit_str(out, pos, "    strb w3, [x0], #1\n", 22);
+                pos = emit_str(out, pos, "    sub x2, x2, #1\n", 19);
+                pos = emit_str(out, pos, "    b .L", 8);
+                pos = emit_int(out, pos, cp_label);
+                pos = emit_str(out, pos, "\n", 1);
+                pos = emit_str(out, pos, ".L", 2);
+                pos = emit_int(out, pos, done_label);
+                pos = emit_str(out, pos, ":\n", 2);
+                return pos;
+            }
+            
+            // int_to_str(dest, n) - convert int to string, return length
+            if name_is(cmp.cmp_source, name_start, name_len, "int_to_str\0", 10) {
+                pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);  // n
+                pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);  // dest
+                pos = emit_str(out, pos, "    bl _int_to_str\n", 19);
+                return pos;
+            }
+            
+            // Regular function call - pop args into registers
+            if arg_count >= 1 {
+                // Pop last arg into highest reg, etc.
+                let r = arg_count - 1;
+                while r >= 0 {
+                    pos = emit_str(out, pos, "    ldr x", 9);
+                    pos = emit_int(out, pos, r);
+                    pos = emit_str(out, pos, ", [sp], #16\n", 12);
+                    r = r - 1;
+                }
+            }
+            
+            // Emit call: bl function_name
+            pos = emit_str(out, pos, "    bl ", 7);
+            str_copy(out + pos, cmp.cmp_source + name_start, name_len);
+            pos = pos + name_len;
+            pos = emit_str(out, pos, "\n", 1);
+            return pos;
+        }
+        
+        // Check for array indexing: ident[expr]
+        if check(cmp, TOK_LBRACKET()) {
+            next_token(cmp);  // consume '['
+            
+            // Load array base address first
+            let offset = sym_find(cmp, name_start, name_len);
+            if offset == 0 {
+                print "Undefined variable (ARRAY)";
+                cmp.cmp_had_error = 1;
+            }
+            pos = emit_str(out, pos, "    ldr x1, [x29, #", 19);
+            pos = emit_int(out, pos, offset);
+            pos = emit_str(out, pos, "]\n", 2);
+            pos = emit_str(out, pos, "    str x1, [sp, #-16]!\n", 24);
+            
+            // Parse index expression
+            pos = parse_expression(cmp, out, pos);
+            consume(cmp, TOK_RBRACKET());
+            
+            // Pop array base into x1, index is in x0
+            pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
+            
+            // Load element: x0 = arr[index] = *(base + 8 + index*8)
+            pos = emit_str(out, pos, "    add x0, x0, #1\n", 19);  // skip length slot
+            pos = emit_str(out, pos, "    lsl x0, x0, #3\n", 19);  // *8
+            pos = emit_str(out, pos, "    ldr x0, [x1, x0]\n", 21);
+            
+            return pos;
+        }
+        
+        // Variable reference - load from stack
+        print 8888;  // DEBUG - entering variable lookup
+        let offset = sym_find(cmp, name_start, name_len);
+        if offset == 0 {
+            print "Undefined variable (VAR)";
+            cmp.cmp_had_error = 1;
+        }
+        pos = emit_str(out, pos, "    ldr x0, [x29, #", 19);
+        pos = emit_int(out, pos, offset);
+        pos = emit_str(out, pos, "]\n", 2);
+        return pos;
+    }
+    
+    print "Unexpected token in primary";
+    cmp.cmp_had_error = 1;
+    return pos;
+}
+
+// Parse unary expression
+fn parse_unary(cmp, out, pos) {
+    if match_tok(cmp, TOK_MINUS()) {
+        pos = parse_unary(cmp, out, pos);
+        pos = emit_str(out, pos, "    neg x0, x0\n", 15);
+        return pos;
+    }
+    if match_tok(cmp, TOK_BANG()) {
+        pos = parse_unary(cmp, out, pos);
+        pos = emit_str(out, pos, "    cmp x0, #0\n", 15);
+        pos = emit_str(out, pos, "    cset x0, eq\n", 16);
+        return pos;
+    }
+    return parse_primary(cmp, out, pos);
+}
+
+// Parse factor (*, /, %)
+fn parse_factor(cmp, out, pos) {
+    pos = parse_unary(cmp, out, pos);
+    
+    while check(cmp, TOK_STAR()) || check(cmp, TOK_SLASH()) || check(cmp, TOK_PERCENT()) {
+        let op = cmp.cmp_tok_type;
+        next_token(cmp);
+        
+        // Push left operand
+        pos = emit_str(out, pos, "    str x0, [sp, #-16]!\n", 24);
+        
+        // Parse right operand
+        pos = parse_unary(cmp, out, pos);
+        
+        // Pop left into x1
+        pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
+        
+        // Emit operation
+        if op == TOK_STAR() {
+            pos = emit_str(out, pos, "    mul x0, x1, x0\n", 19);
+        }
+        if op == TOK_SLASH() {
+            pos = emit_str(out, pos, "    sdiv x0, x1, x0\n", 20);
+        }
+        if op == TOK_PERCENT() {
+            pos = emit_str(out, pos, "    sdiv x2, x1, x0\n", 20);
+            pos = emit_str(out, pos, "    msub x0, x2, x0, x1\n", 24);
+        }
+    }
+    
+    return pos;
+}
+
+// Parse term (+, -)
+fn parse_term(cmp, out, pos) {
+    pos = parse_factor(cmp, out, pos);
+    
+    while check(cmp, TOK_PLUS()) || check(cmp, TOK_MINUS()) {
+        let op = cmp.cmp_tok_type;
+        next_token(cmp);
+        
+        pos = emit_str(out, pos, "    str x0, [sp, #-16]!\n", 24);
+        pos = parse_factor(cmp, out, pos);
+        pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
+        
+        if op == TOK_PLUS() {
+            pos = emit_str(out, pos, "    add x0, x1, x0\n", 19);
+        }
+        if op == TOK_MINUS() {
+            pos = emit_str(out, pos, "    sub x0, x1, x0\n", 19);
+        }
+    }
+    
+    return pos;
+}
+
+// Parse comparison (<, <=, >, >=)
+fn parse_comparison(cmp, out, pos) {
+    pos = parse_term(cmp, out, pos);
+    
+    while check(cmp, TOK_LT()) || check(cmp, TOK_LE()) || check(cmp, TOK_GT()) || check(cmp, TOK_GE()) {
+        let op = cmp.cmp_tok_type;
+        next_token(cmp);
+        
+        pos = emit_str(out, pos, "    str x0, [sp, #-16]!\n", 24);
+        pos = parse_term(cmp, out, pos);
+        pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
+        pos = emit_str(out, pos, "    cmp x1, x0\n", 15);
+        
+        if op == TOK_LT() { pos = emit_str(out, pos, "    cset x0, lt\n", 16); }
+        if op == TOK_LE() { pos = emit_str(out, pos, "    cset x0, le\n", 16); }
+        if op == TOK_GT() { pos = emit_str(out, pos, "    cset x0, gt\n", 16); }
+        if op == TOK_GE() { pos = emit_str(out, pos, "    cset x0, ge\n", 16); }
+    }
+    
+    return pos;
+}
+
+// Parse equality (==, !=)
+fn parse_equality(cmp, out, pos) {
+    pos = parse_comparison(cmp, out, pos);
+    
+    while check(cmp, TOK_EQEQ()) || check(cmp, TOK_BANGEQ()) {
+        let op = cmp.cmp_tok_type;
+        next_token(cmp);
+        
+        pos = emit_str(out, pos, "    str x0, [sp, #-16]!\n", 24);
+        pos = parse_comparison(cmp, out, pos);
+        pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
+        pos = emit_str(out, pos, "    cmp x1, x0\n", 15);
+        
+        if op == TOK_EQEQ() { pos = emit_str(out, pos, "    cset x0, eq\n", 16); }
+        if op == TOK_BANGEQ() { pos = emit_str(out, pos, "    cset x0, ne\n", 16); }
+    }
+    
+    return pos;
+}
+
+// Parse expression (top level)
+fn parse_expression(cmp, out, pos) {
+    return parse_equality(cmp, out, pos);
+}
+
+// ============ STATEMENT PARSING ============
+
+// Parse let statement: let name = expr;
+fn parse_let(cmp, out, pos) {
+    consume(cmp, TOK_IDENT());
+    let name_start = cmp.cmp_prev_start;
+    let name_len = cmp.cmp_prev_len;
+    
+    consume(cmp, TOK_EQ());
+    pos = parse_expression(cmp, out, pos);
+    consume(cmp, TOK_SEMI());
+    
+    // Add to symbol table and store on stack
+    let offset = sym_add(cmp, name_start, name_len);
+    pos = emit_str(out, pos, "    str x0, [x29, #", 19);
+    pos = emit_int(out, pos, offset);
+    pos = emit_str(out, pos, "]\n", 2);
+    
+    return pos;
+}
+
+// Parse assignment: name = expr;
+fn parse_assign(cmp, out, pos, name_start, name_len) {
+    consume(cmp, TOK_EQ());
+    pos = parse_expression(cmp, out, pos);
+    consume(cmp, TOK_SEMI());
+    
+    let offset = sym_find(cmp, name_start, name_len);
+    if offset == 0 {
+        print "Undefined variable in assignment";
+        cmp.cmp_had_error = 1;
+    }
+    pos = emit_str(out, pos, "    str x0, [x29, #", 19);
+    pos = emit_int(out, pos, offset);
+    pos = emit_str(out, pos, "]\n", 2);
+    
+    return pos;
+}
+
+// Parse print statement: print expr;
+fn parse_print(cmp, out, pos) {
+    pos = parse_expression(cmp, out, pos);
+    consume(cmp, TOK_SEMI());
+    pos = emit_str(out, pos, "    bl print_int\n", 17);
+    return pos;
+}
+
+// Parse return statement: return expr;
+fn parse_return(cmp, out, pos) {
+    if !check(cmp, TOK_SEMI()) {
+        pos = parse_expression(cmp, out, pos);
+    } else {
+        pos = emit_str(out, pos, "    mov x0, #0\n", 15);
+    }
+    consume(cmp, TOK_SEMI());
+    
+    // Epilogue
+    pos = emit_str(out, pos, "    mov sp, x29\n", 16);
+    pos = emit_str(out, pos, "    ldp x29, x30, [sp], #16\n", 28);
+    pos = emit_str(out, pos, "    ret\n", 8);
+    
+    return pos;
+}
+
+// NOTE: parse_block and parse_statement call each other, but also need parse_if/parse_while
+// Teddy doesn't have forward declarations, so we'll use a simple workaround:
+// Put the leaf functions (if/while) before block/statement, and have if/while 
+// manually handle blocks inline instead of calling parse_block
+
+// We need to avoid mutual recursion since Teddy doesn't have forward declarations.
+// Solution: parse_block and parse_statement are defined first, and if/while parsing
+// is handled directly inside parse_statement.
+
+// Parse a block: { statements }
+fn parse_block(cmp, out, pos) {
+    consume(cmp, TOK_LBRACE());
+    while !check(cmp, TOK_RBRACE()) && !check(cmp, TOK_EOF()) {
+        pos = parse_statement(cmp, out, pos);
+    }
+    consume(cmp, TOK_RBRACE());
+    return pos;
+}
+
+// Parse a single statement (handles if/while inline to avoid forward refs)
+fn parse_statement(cmp, out, pos) {
+    if match_tok(cmp, TOK_LET()) {
+        return parse_let(cmp, out, pos);
+    }
+    if match_tok(cmp, TOK_PRINT()) {
+        return parse_print(cmp, out, pos);
+    }
+    if match_tok(cmp, TOK_RETURN()) {
+        return parse_return(cmp, out, pos);
+    }
+    
+    // IF statement - inline to avoid forward reference
+    if match_tok(cmp, TOK_IF()) {
+        pos = parse_expression(cmp, out, pos);
+        
+        let else_label = cmp.cmp_label_count;
+        cmp.cmp_label_count = cmp.cmp_label_count + 1;
+        let end_label = cmp.cmp_label_count;
+        cmp.cmp_label_count = cmp.cmp_label_count + 1;
+        
+        pos = emit_str(out, pos, "    cmp x0, #0\n", 15);
+        pos = emit_str(out, pos, "    b.eq .L", 11);
+        pos = emit_int(out, pos, else_label);
+        pos = emit_str(out, pos, "\n", 1);
+        
+        // Then block
+        pos = parse_block(cmp, out, pos);
+        pos = emit_str(out, pos, "    b .L", 8);
+        pos = emit_int(out, pos, end_label);
+        pos = emit_str(out, pos, "\n", 1);
+        
+        // Else label
+        pos = emit_str(out, pos, ".L", 2);
+        pos = emit_int(out, pos, else_label);
+        pos = emit_str(out, pos, ":\n", 2);
+        
+        // Else block (optional)
+        if match_tok(cmp, TOK_ELSE()) {
+            pos = parse_block(cmp, out, pos);
+        }
+        
+        // End label
+        pos = emit_str(out, pos, ".L", 2);
+        pos = emit_int(out, pos, end_label);
+        pos = emit_str(out, pos, ":\n", 2);
+        
+        return pos;
+    }
+    
+    // WHILE statement - inline to avoid forward reference
+    if match_tok(cmp, TOK_WHILE()) {
+        let start_label = cmp.cmp_label_count;
+        cmp.cmp_label_count = cmp.cmp_label_count + 1;
+        let end_label = cmp.cmp_label_count;
+        cmp.cmp_label_count = cmp.cmp_label_count + 1;
+        
+        // Start label
+        pos = emit_str(out, pos, ".L", 2);
+        pos = emit_int(out, pos, start_label);
+        pos = emit_str(out, pos, ":\n", 2);
+        
+        // Condition
+        pos = parse_expression(cmp, out, pos);
+        pos = emit_str(out, pos, "    cmp x0, #0\n", 15);
+        pos = emit_str(out, pos, "    b.eq .L", 11);
+        pos = emit_int(out, pos, end_label);
+        pos = emit_str(out, pos, "\n", 1);
+        
+        // Body
+        pos = parse_block(cmp, out, pos);
+        pos = emit_str(out, pos, "    b .L", 8);
+        pos = emit_int(out, pos, start_label);
+        pos = emit_str(out, pos, "\n", 1);
+        
+        // End label
+        pos = emit_str(out, pos, ".L", 2);
+        pos = emit_int(out, pos, end_label);
+        pos = emit_str(out, pos, ":\n", 2);
+        
+        return pos;
+    }
+    
+    if match_tok(cmp, TOK_IDENT()) {
+        // Assignment: ident = expr;
+        let name_start = cmp.cmp_prev_start;
+        let name_len = cmp.cmp_prev_len;
+        return parse_assign(cmp, out, pos, name_start, name_len);
+    }
+    
+    // Expression statement
+    pos = parse_expression(cmp, out, pos);
+    consume(cmp, TOK_SEMI());
+    return pos;
+}
+
+// Parse function definition: fn name(params) { body }
+fn parse_function(cmp, out, pos) {
+    consume(cmp, TOK_IDENT());
+    let name_start = cmp.cmp_prev_start;
+    let name_len = cmp.cmp_prev_len;
+    
+    // Clear symbol table for this function
+    sym_clear(cmp);
+    
+    // Emit function label
+    pos = emit_str(out, pos, "\n", 1);
+    str_copy(out + pos, cmp.cmp_source + name_start, name_len);
+    pos = pos + name_len;
+    pos = emit_str(out, pos, ":\n", 2);
+    
+    // Prologue
+    pos = emit_str(out, pos, "    stp x29, x30, [sp, #-16]!\n", 30);
+    pos = emit_str(out, pos, "    mov x29, sp\n", 16);
+    pos = emit_str(out, pos, "    sub sp, sp, #256\n", 21);
+    
+    // Parse parameters
+    consume(cmp, TOK_LPAREN());
+    let param_idx = 0;
+    if !check(cmp, TOK_RPAREN()) {
+        // First param
+        consume(cmp, TOK_IDENT());
+        let pstart = cmp.cmp_prev_start;
+        let plen = cmp.cmp_prev_len;
+        let offset = sym_add(cmp, pstart, plen);
+        pos = emit_str(out, pos, "    str x", 9);
+        pos = emit_int(out, pos, param_idx);
+        pos = emit_str(out, pos, ", [x29, #", 9);
+        pos = emit_int(out, pos, offset);
+        pos = emit_str(out, pos, "]\n", 2);
+        param_idx = param_idx + 1;
+        
+        while check(cmp, TOK_COMMA()) {
+            next_token(cmp);  // consume ','
+            consume(cmp, TOK_IDENT());
+            pstart = cmp.cmp_prev_start;
+            plen = cmp.cmp_prev_len;
+            offset = sym_add(cmp, pstart, plen);
+            pos = emit_str(out, pos, "    str x", 9);
+            pos = emit_int(out, pos, param_idx);
+            pos = emit_str(out, pos, ", [x29, #", 9);
+            pos = emit_int(out, pos, offset);
+            pos = emit_str(out, pos, "]\n", 2);
+            param_idx = param_idx + 1;
+        }
+    }
+    consume(cmp, TOK_RPAREN());
+    
+    // Parse body
+    pos = parse_block(cmp, out, pos);
+    
+    // Default return
+    pos = emit_str(out, pos, "    mov x0, #0\n", 15);
+    pos = emit_str(out, pos, "    mov sp, x29\n", 16);
+    pos = emit_str(out, pos, "    ldp x29, x30, [sp], #16\n", 28);
+    pos = emit_str(out, pos, "    ret\n", 8);
+    
+    return pos;
+}
+
+// Emit program header
+fn emit_header(out, pos) {
+    pos = emit_str(out, pos, "// Generated by Teddy Compiler (self-hosted!)\n", 46);
+    pos = emit_str(out, pos, ".global _start\n", 15);
+    pos = emit_str(out, pos, ".text\n", 6);
+    return pos;
+}
+
+// Emit print_int runtime
+fn emit_runtime(out, pos) {
+    pos = emit_str(out, pos, "\nprint_int:\n", 12);
+    pos = emit_str(out, pos, "    stp x29, x30, [sp, #-16]!\n", 30);
+    pos = emit_str(out, pos, "    mov x29, sp\n", 16);
+    pos = emit_str(out, pos, "    sub sp, sp, #32\n", 20);
+    pos = emit_str(out, pos, "    mov x9, x0\n", 15);
+    pos = emit_str(out, pos, "    mov x10, #0\n", 16);
+    pos = emit_str(out, pos, "    cmp x9, #0\n", 15);
+    pos = emit_str(out, pos, "    b.ge .pp\n", 13);
+    pos = emit_str(out, pos, "    mov x10, #1\n", 16);
+    pos = emit_str(out, pos, "    neg x9, x9\n", 15);
+    pos = emit_str(out, pos, ".pp:\n", 5);
+    pos = emit_str(out, pos, "    mov x11, sp\n", 16);
+    pos = emit_str(out, pos, "    mov x12, #10\n", 17);
+    pos = emit_str(out, pos, "    strb w12, [x11, #-1]!\n", 26);
+    pos = emit_str(out, pos, "    mov x13, #10\n", 17);
+    pos = emit_str(out, pos, ".pl:\n", 5);
+    pos = emit_str(out, pos, "    udiv x14, x9, x13\n", 22);
+    pos = emit_str(out, pos, "    msub x15, x14, x13, x9\n", 27);
+    pos = emit_str(out, pos, "    add x15, x15, #48\n", 22);
+    pos = emit_str(out, pos, "    strb w15, [x11, #-1]!\n", 26);
+    pos = emit_str(out, pos, "    mov x9, x14\n", 16);
+    pos = emit_str(out, pos, "    cbnz x9, .pl\n", 17);
+    pos = emit_str(out, pos, "    cbz x10, .pw\n", 17);
+    pos = emit_str(out, pos, "    mov x12, #45\n", 17);
+    pos = emit_str(out, pos, "    strb w12, [x11, #-1]!\n", 26);
+    pos = emit_str(out, pos, ".pw:\n", 5);
+    pos = emit_str(out, pos, "    mov x0, #1\n", 15);
+    pos = emit_str(out, pos, "    mov x1, x11\n", 16);
+    pos = emit_str(out, pos, "    mov x2, sp\n", 15);
+    pos = emit_str(out, pos, "    sub x2, x2, x11\n", 20);
+    pos = emit_str(out, pos, "    mov x8, #64\n", 16);
+    pos = emit_str(out, pos, "    svc #0\n", 11);
+    pos = emit_str(out, pos, "    mov sp, x29\n", 16);
+    pos = emit_str(out, pos, "    ldp x29, x30, [sp], #16\n", 28);
+    pos = emit_str(out, pos, "    ret\n", 8);
+    
+    // _int_to_str: x0=dest, x1=number, returns length in x0
+    pos = emit_str(out, pos, "\n_int_to_str:\n", 14);
+    pos = emit_str(out, pos, "    stp x29, x30, [sp, #-16]!\n", 30);
+    pos = emit_str(out, pos, "    mov x29, sp\n", 16);
+    pos = emit_str(out, pos, "    sub sp, sp, #32\n", 20);
+    pos = emit_str(out, pos, "    mov x9, x0\n", 15);   // dest
+    pos = emit_str(out, pos, "    mov x10, x1\n", 16);  // number
+    pos = emit_str(out, pos, "    mov x11, sp\n", 16);  // temp buffer end
+    pos = emit_str(out, pos, "    mov x12, #0\n", 16);  // is_neg
+    pos = emit_str(out, pos, "    cmp x10, #0\n", 16);
+    pos = emit_str(out, pos, "    b.ge .its_pos\n", 18);
+    pos = emit_str(out, pos, "    mov x12, #1\n", 16);
+    pos = emit_str(out, pos, "    neg x10, x10\n", 17);
+    pos = emit_str(out, pos, ".its_pos:\n", 10);
+    pos = emit_str(out, pos, "    mov x13, #10\n", 17);
+    pos = emit_str(out, pos, ".its_loop:\n", 11);
+    pos = emit_str(out, pos, "    udiv x14, x10, x13\n", 23);
+    pos = emit_str(out, pos, "    msub x15, x14, x13, x10\n", 28);
+    pos = emit_str(out, pos, "    add x15, x15, #48\n", 22);
+    pos = emit_str(out, pos, "    strb w15, [x11, #-1]!\n", 26);
+    pos = emit_str(out, pos, "    mov x10, x14\n", 17);
+    pos = emit_str(out, pos, "    cbnz x10, .its_loop\n", 24);
+    pos = emit_str(out, pos, "    cbz x12, .its_copy\n", 23);
+    pos = emit_str(out, pos, "    mov x15, #45\n", 17);  // '-'
+    pos = emit_str(out, pos, "    strb w15, [x11, #-1]!\n", 26);
+    pos = emit_str(out, pos, ".its_copy:\n", 11);
+    pos = emit_str(out, pos, "    mov x0, #0\n", 15);   // length counter
+    pos = emit_str(out, pos, ".its_cp:\n", 9);
+    pos = emit_str(out, pos, "    mov x16, sp\n", 16);
+    pos = emit_str(out, pos, "    cmp x11, x16\n", 17);
+    pos = emit_str(out, pos, "    b.eq .its_done\n", 19);
+    pos = emit_str(out, pos, "    ldrb w15, [x11], #1\n", 24);
+    pos = emit_str(out, pos, "    strb w15, [x9], #1\n", 23);
+    pos = emit_str(out, pos, "    add x0, x0, #1\n", 19);
+    pos = emit_str(out, pos, "    b .its_cp\n", 14);
+    pos = emit_str(out, pos, ".its_done:\n", 11);
+    pos = emit_str(out, pos, "    mov sp, x29\n", 16);
+    pos = emit_str(out, pos, "    ldp x29, x30, [sp], #16\n", 28);
+    pos = emit_str(out, pos, "    ret\n", 8);
+    
+    return pos;
+}
+
+// Emit _start entry point
+fn emit_start(out, pos) {
+    pos = emit_str(out, pos, "\n_start:\n", 9);
+    pos = emit_str(out, pos, "    bl main\n", 12);
+    pos = emit_str(out, pos, "    mov x8, #93\n", 16);
+    pos = emit_str(out, pos, "    svc #0\n", 11);
+    return pos;
+}
+
+// Emit data section with all strings
+fn emit_data(cmp, out, pos) {
+    if cmp.cmp_str_count == 0 {
+        return pos;
+    }
+    
+    pos = emit_str(out, pos, "\n.data\n", 7);
+    
+    let i = 0;
+    while i < cmp.cmp_str_count {
+        // Emit label
+        pos = emit_str(out, pos, ".str", 4);
+        pos = emit_int(out, pos, i);
+        pos = emit_str(out, pos, ":\n    .ascii \"", 14);
+        
+        // Emit string content (with escape handling)
+        let str_start = arr_get(cmp.cmp_str_starts, i);
+        let str_len = arr_get(cmp.cmp_str_lens, i);
+        let j = 0;
+        while j < str_len {
+            let c = char_at(cmp.cmp_source, str_start + j);
+            // Handle escape sequences in source
+            if c == 92 {  // backslash
+                j = j + 1;
+                if j < str_len {
+                    let next = char_at(cmp.cmp_source, str_start + j);
+                    if next == 110 {  // 'n'
+                        pos = emit_str(out, pos, "\\n", 2);
+                    } else {
+                        if next == 116 {  // 't'
+                            pos = emit_str(out, pos, "\\t", 2);
+                        } else {
+                            if next == 48 {  // '0'
+                                pos = emit_str(out, pos, "\\0", 2);
+                            } else {
+                                if next == 92 {  // '\\'
+                                    pos = emit_str(out, pos, "\\\\", 2);
+                                } else {
+                                    if next == 34 {  // '"'
+                                        pos = emit_str(out, pos, "\\\"", 2);
+                                    } else {
+                                        // Unknown escape, emit as-is
+                                        poke(out + pos, c);
+                                        pos = pos + 1;
+                                        poke(out + pos, next);
+                                        pos = pos + 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                poke(out + pos, c);
+                pos = pos + 1;
+            }
+            j = j + 1;
+        }
+        
+        pos = emit_str(out, pos, "\\0\"\n", 4);  // null terminate
+        i = i + 1;
+    }
+    
+    return pos;
+}
+
+// Parse entire program
+fn parse_program(cmp, out, pos) {
+    while !check(cmp, TOK_EOF()) {
+        if match_tok(cmp, TOK_FN()) {
+            pos = parse_function(cmp, out, pos);
+        } else {
+            print "Expected fn";
+            cmp.cmp_had_error = 1;
+            return pos;
+        }
+    }
+    return pos;
+}
+
+// Compile a complete program with runtime
+fn compile(cmp, out) {
+    let pos = 0;
+    
+    pos = emit_header(out, pos);
+    pos = emit_runtime(out, pos);
+    
+    next_token(cmp);
+    pos = parse_program(cmp, out, pos);
+    
+    pos = emit_start(out, pos);
+    pos = emit_data(cmp, out, pos);
+    
+    return pos;
+}
+
+// ============ TEST ============
+fn main() {
+    // Test: strings!
+    let source = "fn foo(x) { return x; } fn main() { print foo(5); return 0; }\0";
+    
+    let cmp = Compiler {
+        cmp_source: source,
+        cmp_source_len: 61,
+        cmp_start: 0,
+        cmp_current: 0,
+        cmp_line: 1,
+        cmp_tok_type: 0,
+        cmp_tok_start: 0,
+        cmp_tok_len: 0,
+        cmp_prev_type: 0,
+        cmp_prev_start: 0,
+        cmp_prev_len: 0,
+        cmp_label_count: 0,
+        cmp_stack_offset: 0,
+        cmp_sym_starts: 0,
+        cmp_sym_lens: 0,
+        cmp_sym_offsets: 0,
+        cmp_sym_count: 0,
+        cmp_str_starts: 0,
+        cmp_str_lens: 0,
+        cmp_str_count: 0,
+        cmp_had_error: 0
+    };
+    
+    // Initialize symbol table
+    sym_init(cmp);
+    
+    // Allocate output buffer
+    let out = alloc(32768);
+    
+    // Compile
+    let pos = compile(cmp, out);
+    
+    // Print generated code
+    put_str(out, pos);
+    
+    if cmp.cmp_had_error {
+        print "Compilation failed!";
+    } else {
+        print "Compilation successful!";
+    }
+    
+    return 0;
+}

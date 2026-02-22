@@ -1,0 +1,41 @@
+// Test string manipulation builtins
+
+fn main() {
+    // Test alloc - allocate a buffer
+    let buf = alloc(100);
+    
+    // Test int_to_str
+    let len = int_to_str(buf, 12345);
+    put_str(buf, len);
+    put_char(10);  // newline
+    
+    // Test with negative number
+    let len2 = int_to_str(buf, -42);
+    put_str(buf, len2);
+    put_char(10);
+    
+    // Test str_copy
+    let src = "Hello";
+    let dest = alloc(100);
+    str_copy(dest, src, 5);
+    put_str(dest, 5);
+    put_char(10);
+    
+    // Build a string by concatenating parts
+    let out = alloc(100);
+    let pos = 0;
+    
+    // Copy "Value: " to out
+    let part1 = "Value: ";
+    str_copy(out, part1, 7);
+    pos = 7;
+    
+    // Convert 999 to string and append
+    let numlen = int_to_str(out + pos, 999);
+    pos = pos + numlen;
+    
+    put_str(out, pos);
+    put_char(10);
+    
+    return 0;
+}

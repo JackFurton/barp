@@ -1,0 +1,60 @@
+struct Token {
+    type,
+    start,
+    length,
+    line
+}
+
+struct Lexer {
+    source,
+    source_len,
+    start,
+    current,
+    line
+}
+
+fn is_digit(c) {
+    return c >= 48 && c <= 57;
+}
+
+fn lexer_at_end(lexer) {
+    return lexer.current >= lexer.source_len;
+}
+
+fn lexer_advance(lexer) {
+    let c = char_at(lexer.source, lexer.current);
+    lexer.current = lexer.current + 1;
+    return c;
+}
+
+fn lexer_peek(lexer) {
+    if lexer_at_end(lexer) {
+        return 0;
+    }
+    return char_at(lexer.source, lexer.current);
+}
+
+fn make_token(lexer, tok_type) {
+    let tok = Token {
+        type: tok_type,
+        start: lexer.start,
+        length: lexer.current - lexer.start,
+        line: lexer.line
+    };
+    return tok;
+}
+
+fn main() {
+    let lexer = Lexer {
+        source: "hello",
+        source_len: 5,
+        start: 0,
+        current: 0,
+        line: 1
+    };
+    
+    let tok = make_token(lexer, 25);
+    print tok.type;
+    
+    return 0;
+}

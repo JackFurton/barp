@@ -1,0 +1,19 @@
+struct Token {
+    type,
+    value
+}
+
+fn make_token(t, v) {
+    let tok = Token {
+        type: t,
+        value: v
+    };
+    return tok;
+}
+
+fn main() {
+    let tok = make_token(5, 42);
+    print tok.type;
+    print tok.value;
+    return 0;
+}

@@ -1,0 +1,18 @@
+// Test array assignment
+fn main() {
+    let arr = [1, 2, 3, 4, 5];
+    
+    print arr[0];
+    print arr[2];
+    
+    // Modify array
+    arr[0] = 100;
+    arr[2] = 300;
+    
+    print arr[0];
+    print arr[2];
+    
+    // Sum
+    let sum = arr[0] + arr[1] + arr[2] + arr[3] + arr[4];
+    print sum;
+}

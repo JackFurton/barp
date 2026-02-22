@@ -1,0 +1,24 @@
+// Test string character access
+
+fn main() {
+    let s = "Hello";
+    
+    // Get individual characters
+    let c0 = char_at(s, 0);  // 'H' = 72
+    let c1 = char_at(s, 1);  // 'e' = 101
+    let c4 = char_at(s, 4);  // 'o' = 111
+    
+    print c0;
+    print c1;
+    print c4;
+    
+    // Check if character is a letter (H=72, e=101)
+    // 'A'=65, 'Z'=90, 'a'=97, 'z'=122
+    if c0 >= 65 {
+        if c0 <= 90 {
+            print 1;  // uppercase
+        }
+    }
+    
+    return 0;
+}

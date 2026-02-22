@@ -1,0 +1,45 @@
+// Test enums and pattern matching
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+fn color_to_int(c) {
+    return match c {
+        Red => 1,
+        Green => 2,
+        Blue => 3
+    };
+}
+
+fn main() {
+    let red = Color::Red;
+    let green = Color::Green;
+    let blue = Color::Blue;
+    
+    // Print enum values (they're just integers 0, 1, 2)
+    print red;
+    print green;
+    print blue;
+    
+    // Test match expression
+    let v1 = color_to_int(red);
+    let v2 = color_to_int(green);
+    let v3 = color_to_int(blue);
+    
+    print v1;
+    print v2;
+    print v3;
+    
+    // Direct match
+    let x = match blue {
+        Red => 10,
+        Green => 20,
+        Blue => 30
+    };
+    print x;
+    
+    return 0;
+}

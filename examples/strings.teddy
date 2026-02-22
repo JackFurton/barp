@@ -1,0 +1,6 @@
+// Test strings!
+fn main() {
+    print "Hello, World!";
+    print "Teddy compiler is working!";
+    print 42;
+}

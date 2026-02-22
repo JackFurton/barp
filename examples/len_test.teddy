@@ -1,0 +1,15 @@
+// Test len() builtin
+fn main() {
+    let arr = [10, 20, 30, 40, 50];
+    
+    print len(arr);
+    
+    // Use len in a loop
+    let i = 0;
+    let sum = 0;
+    while i < len(arr) {
+        sum = sum + arr[i];
+        i = i + 1;
+    }
+    print sum;
+}

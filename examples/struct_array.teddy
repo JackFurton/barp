@@ -1,0 +1,24 @@
+struct Point {
+    pt_x,
+    pt_y
+}
+
+fn main() {
+    // Try an array of... integers first
+    let arr = [1, 2, 3];
+    print arr[0];
+    print arr[1];
+    
+    // Now try creating multiple structs
+    let p1 = Point { pt_x: 10, pt_y: 20 };
+    let p2 = Point { pt_x: 30, pt_y: 40 };
+    
+    print p1.pt_x;
+    print p2.pt_x;
+    
+    // Can we store struct pointers in an array?
+    // This would require storing the pointer value...
+    // For now, let's just verify structs work
+    
+    return 0;
+}

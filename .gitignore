@@ -1,0 +1,13 @@
+# Build artifacts
+build/
+teddy
+*.o
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+
+# OS
+.DS_Store

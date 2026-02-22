@@ -1,0 +1,51 @@
+// Test enums with data (ADTs) - Option type
+
+enum Option {
+    None,
+    Some(value)
+}
+
+fn unwrap_or(opt, default_val) {
+    return match opt {
+        None => default_val,
+        Some(v) => v
+    };
+}
+
+fn main() {
+    // Create Some variant with data
+    let x = Option::Some(42);
+    
+    // Create None variant (no data)
+    let y = Option::None;
+    
+    // Match on Some - should extract 42
+    let result1 = match x {
+        None => 0,
+        Some(v) => v
+    };
+    print result1;  // should print 42
+    
+    // Match on None - should return default
+    let result2 = match y {
+        None => 99,
+        Some(v) => v
+    };
+    print result2;  // should print 99
+    
+    // Test with function
+    let a = unwrap_or(x, 0);
+    let b = unwrap_or(y, 100);
+    print a;  // should print 42
+    print b;  // should print 100
+    
+    // Test Some with expression
+    let z = Option::Some(10 + 20);
+    let result3 = match z {
+        None => 0,
+        Some(val) => val * 2
+    };
+    print result3;  // should print 60
+    
+    return 0;
+}

@@ -1,0 +1,181 @@
+// Teddy AST - Abstract Syntax Tree definitions
+// Uses node pools with indices instead of pointers
+
+// ============ EXPRESSION TYPES ============
+// Expression type constants
+fn EXPR_INT() { return 0; }
+fn EXPR_BOOL() { return 1; }
+fn EXPR_STRING() { return 2; }
+fn EXPR_VAR() { return 3; }
+fn EXPR_BINARY() { return 4; }
+fn EXPR_UNARY() { return 5; }
+fn EXPR_CALL() { return 6; }
+fn EXPR_INDEX() { return 7; }
+fn EXPR_FIELD() { return 8; }
+fn EXPR_STRUCT_LIT() { return 9; }
+fn EXPR_ARRAY_LIT() { return 10; }
+
+// Binary operators
+fn OP_ADD() { return 0; }
+fn OP_SUB() { return 1; }
+fn OP_MUL() { return 2; }
+fn OP_DIV() { return 3; }
+fn OP_MOD() { return 4; }
+fn OP_EQ() { return 5; }
+fn OP_NE() { return 6; }
+fn OP_LT() { return 7; }
+fn OP_LE() { return 8; }
+fn OP_GT() { return 9; }
+fn OP_GE() { return 10; }
+fn OP_AND() { return 11; }
+fn OP_OR() { return 12; }
+
+// Unary operators
+fn OP_NEG() { return 0; }
+fn OP_NOT() { return 1; }
+
+// ============ STATEMENT TYPES ============
+fn STMT_EXPR() { return 0; }
+fn STMT_PRINT() { return 1; }
+fn STMT_LET() { return 2; }
+fn STMT_ASSIGN() { return 3; }
+fn STMT_IF() { return 4; }
+fn STMT_WHILE() { return 5; }
+fn STMT_RETURN() { return 6; }
+fn STMT_BLOCK() { return 7; }
+fn STMT_INDEX_ASSIGN() { return 8; }
+fn STMT_FIELD_ASSIGN() { return 9; }
+
+// ============ EXPRESSION NODE ============
+// All expression data packed into one struct
+// Unused fields are 0
+struct Expr {
+    expr_type,        // EXPR_* constant
+    expr_line,        // source line number
+    // For literals:
+    expr_int_val,     // integer value
+    expr_str_start,   // string start index in source
+    expr_str_len,     // string length
+    // For variables/calls/fields:
+    expr_name_start,  // name start in source
+    expr_name_len,    // name length
+    // For binary/unary:
+    expr_op,          // OP_* constant
+    expr_left,        // index of left expr (-1 if none)
+    expr_right,       // index of right expr (-1 if none)
+    // For calls:
+    expr_arg_start,   // first arg index in arg pool
+    expr_arg_count,   // number of arguments
+    // For struct literals:
+    expr_field_start, // first field in field pool
+    expr_field_count  // number of fields
+}
+
+// ============ STATEMENT NODE ============
+struct Stmt {
+    stmt_type,        // STMT_* constant
+    stmt_line,        // source line number
+    // For let/assign:
+    stmt_name_start,  // variable name start
+    stmt_name_len,    // variable name length
+    // For expressions:
+    stmt_expr,        // expression index (-1 if none)
+    // For if/while:
+    stmt_cond,        // condition expression index
+    stmt_then,        // then block index (or body for while)
+    stmt_else,        // else block index (-1 if none)
+    // For blocks:
+    stmt_body_start,  // first statement index in stmt pool
+    stmt_body_count,  // number of statements
+    // For index/field assign:
+    stmt_target,      // target expression index
+    stmt_index,       // index expression (for index assign)
+    stmt_field_start, // field name start (for field assign)
+    stmt_field_len    // field name length
+}
+
+// ============ FUNCTION NODE ============
+struct Func {
+    func_name_start,   // function name start
+    func_name_len,     // function name length
+    func_param_start,  // first param in param pool
+    func_param_count,  // number of parameters
+    func_body          // body block statement index
+}
+
+// ============ STRUCT DEF NODE ============
+struct StructDef {
+    sdef_name_start,   // struct name start
+    sdef_name_len,     // struct name length
+    sdef_field_start,  // first field in field name pool
+    sdef_field_count   // number of fields
+}
+
+// ============ PROGRAM NODE ============
+struct Program {
+    prog_struct_count,  // number of structs
+    prog_func_count     // number of functions
+}
+
+// ============ NODE POOLS ============
+// We'll allocate these as arrays in the compiler
+// Maximum sizes for a reasonably complex program
+
+fn MAX_EXPRS() { return 1000; }
+fn MAX_STMTS() { return 500; }
+fn MAX_FUNCS() { return 100; }
+fn MAX_STRUCTS() { return 50; }
+fn MAX_PARAMS() { return 200; }      // total params across all funcs
+fn MAX_ARGS() { return 500; }        // total call args
+fn MAX_FIELDS() { return 200; }      // total struct fields
+
+// Pool management
+struct ExprPool {
+    pool_count  // number of expressions allocated
+}
+
+struct StmtPool {
+    pool_count
+}
+
+struct FuncPool {
+    pool_count
+}
+
+struct StructPool {
+    pool_count
+}
+
+// Helper to create a new expression index
+fn expr_alloc(pool) {
+    let idx = pool.pool_count;
+    pool.pool_count = pool.pool_count + 1;
+    return idx;
+}
+
+fn stmt_alloc(pool) {
+    let idx = pool.pool_count;
+    pool.pool_count = pool.pool_count + 1;
+    return idx;
+}
+
+fn func_alloc(pool) {
+    let idx = pool.pool_count;
+    pool.pool_count = pool.pool_count + 1;
+    return idx;
+}
+
+fn struct_alloc(pool) {
+    let idx = pool.pool_count;
+    pool.pool_count = pool.pool_count + 1;
+    return idx;
+}
+
+// Test the AST structures
+fn main() {
+    print "AST module loaded";
+    print EXPR_INT();
+    print EXPR_CALL();
+    print STMT_IF();
+    return 0;
+}

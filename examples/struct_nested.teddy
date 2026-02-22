@@ -1,0 +1,26 @@
+// Test nested struct access
+
+struct Rect {
+    width,
+    height
+}
+
+fn area(w, h) {
+    return w * h;
+}
+
+fn main() {
+    let r = Rect { width: 5, height: 10 };
+    
+    // Call function with struct fields
+    let a = area(r.width, r.height);
+    print a;
+    
+    // Modify and recalculate
+    r.width = 8;
+    r.height = 12;
+    let a2 = area(r.width, r.height);
+    print a2;
+    
+    return 0;
+}

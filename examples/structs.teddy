@@ -1,0 +1,25 @@
+// Test struct support
+
+struct Point {
+    x,
+    y
+}
+
+fn main() {
+    // Create a Point
+    let p = Point { x: 10, y: 20 };
+    
+    // Access fields
+    print p.x;
+    print p.y;
+    
+    // Compute sum
+    let sum = p.x + p.y;
+    print sum;
+    
+    // Modify fields
+    p.x = 100;
+    print p.x;
+    
+    return 0;
+}

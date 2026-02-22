@@ -1,0 +1,12 @@
+// Test file I/O
+fn main() {
+    // Write to a file
+    let content = "Hello from Teddy!\n";
+    write_file("test_output.txt\0", content, 18);
+    
+    // Read it back
+    let data = read_file("test_output.txt\0");
+    print len(data);
+    
+    print "Done!";
+}

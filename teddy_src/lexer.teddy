@@ -1,0 +1,316 @@
+// Teddy Lexer - written in Teddy!
+// This is the first step toward self-hosting.
+
+// Token struct
+struct Token {
+    tok_type,
+    tok_start,
+    tok_length,
+    tok_line
+}
+
+// Lexer struct  
+struct Lexer {
+    lex_source,
+    lex_source_len,
+    lex_start,
+    lex_current,
+    lex_line
+}
+
+// Character helper functions
+fn is_digit(c) {
+    return c >= 48 && c <= 57;
+}
+
+fn is_alpha(c) {
+    if c >= 65 && c <= 90 {
+        return 1;
+    }
+    if c >= 97 && c <= 122 {
+        return 1;
+    }
+    if c == 95 {
+        return 1;
+    }
+    return 0;
+}
+
+fn is_alnum(c) {
+    return is_alpha(c) || is_digit(c);
+}
+
+// Lexer functions
+fn lexer_at_end(lexer) {
+    return lexer.lex_current >= lexer.lex_source_len;
+}
+
+fn lexer_advance(lexer) {
+    let c = char_at(lexer.lex_source, lexer.lex_current);
+    lexer.lex_current = lexer.lex_current + 1;
+    return c;
+}
+
+fn lexer_peek(lexer) {
+    if lexer_at_end(lexer) {
+        return 0;
+    }
+    return char_at(lexer.lex_source, lexer.lex_current);
+}
+
+fn lexer_peek_next(lexer) {
+    if lexer.lex_current + 1 >= lexer.lex_source_len {
+        return 0;
+    }
+    return char_at(lexer.lex_source, lexer.lex_current + 1);
+}
+
+fn lexer_match(lexer, expected) {
+    if lexer_at_end(lexer) {
+        return 0;
+    }
+    if char_at(lexer.lex_source, lexer.lex_current) != expected {
+        return 0;
+    }
+    lexer.lex_current = lexer.lex_current + 1;
+    return 1;
+}
+
+fn make_token(lexer, tok_type) {
+    let tok = Token {
+        tok_type: tok_type,
+        tok_start: lexer.lex_start,
+        tok_length: lexer.lex_current - lexer.lex_start,
+        tok_line: lexer.lex_line
+    };
+    return tok;
+}
+
+fn error_token(lexer) {
+    let tok = Token {
+        tok_type: 39,
+        tok_start: 0,
+        tok_length: 0,
+        tok_line: lexer.lex_line
+    };
+    return tok;
+}
+
+fn skip_whitespace(lexer) {
+    while 1 {
+        if lexer_at_end(lexer) {
+            return 0;
+        }
+        let c = lexer_peek(lexer);
+        if c == 32 || c == 9 || c == 13 {
+            lexer_advance(lexer);
+        } else {
+            if c == 10 {
+                lexer.lex_line = lexer.lex_line + 1;
+                lexer_advance(lexer);
+            } else {
+                if c == 47 && lexer_peek_next(lexer) == 47 {
+                    while !lexer_at_end(lexer) && lexer_peek(lexer) != 10 {
+                        lexer_advance(lexer);
+                    }
+                } else {
+                    return 0;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+fn scan_string(lexer) {
+    while !lexer_at_end(lexer) && lexer_peek(lexer) != 34 {
+        if lexer_peek(lexer) == 10 {
+            lexer.lex_line = lexer.lex_line + 1;
+        }
+        lexer_advance(lexer);
+    }
+    
+    if lexer_at_end(lexer) {
+        return error_token(lexer);
+    }
+    
+    lexer_advance(lexer);
+    return make_token(lexer, 26);
+}
+
+fn scan_number(lexer) {
+    while is_digit(lexer_peek(lexer)) {
+        lexer_advance(lexer);
+    }
+    return make_token(lexer, 25);
+}
+
+fn check_keyword(lexer, kw_start, kw_len, rest, kw_type) {
+    let tok_len = lexer.lex_current - lexer.lex_start;
+    if tok_len != kw_start + kw_len {
+        return 27;
+    }
+    
+    let i = 0;
+    while i < kw_len {
+        if char_at(lexer.lex_source, lexer.lex_start + kw_start + i) != char_at(rest, i) {
+            return 27;
+        }
+        i = i + 1;
+    }
+    return kw_type;
+}
+
+fn identifier_type(lexer) {
+    let c = char_at(lexer.lex_source, lexer.lex_start);
+    
+    if c == 101 {
+        return check_keyword(lexer, 1, 3, "lse\0", 32);
+    }
+    if c == 102 {
+        if lexer.lex_current - lexer.lex_start > 1 {
+            let c2 = char_at(lexer.lex_source, lexer.lex_start + 1);
+            if c2 == 97 {
+                return check_keyword(lexer, 2, 3, "lse\0", 37);
+            }
+            if c2 == 110 {
+                return check_keyword(lexer, 2, 0, "\0", 28);
+            }
+        }
+    }
+    if c == 105 {
+        return check_keyword(lexer, 1, 1, "f\0", 31);
+    }
+    if c == 108 {
+        return check_keyword(lexer, 1, 2, "et\0", 29);
+    }
+    if c == 112 {
+        return check_keyword(lexer, 1, 4, "rint\0", 35);
+    }
+    if c == 114 {
+        return check_keyword(lexer, 1, 5, "eturn\0", 34);
+    }
+    if c == 115 {
+        return check_keyword(lexer, 1, 5, "truct\0", 30);
+    }
+    if c == 116 {
+        return check_keyword(lexer, 1, 3, "rue\0", 36);
+    }
+    if c == 119 {
+        return check_keyword(lexer, 1, 4, "hile\0", 33);
+    }
+    
+    return 27;
+}
+
+fn scan_identifier(lexer) {
+    while is_alnum(lexer_peek(lexer)) {
+        lexer_advance(lexer);
+    }
+    return make_token(lexer, identifier_type(lexer));
+}
+
+fn lexer_next_token(lexer) {
+    skip_whitespace(lexer);
+    lexer.lex_start = lexer.lex_current;
+    
+    if lexer_at_end(lexer) {
+        return make_token(lexer, 38);
+    }
+    
+    let c = lexer_advance(lexer);
+    
+    if is_alpha(c) {
+        return scan_identifier(lexer);
+    }
+    
+    if is_digit(c) {
+        return scan_number(lexer);
+    }
+    
+    if c == 40 { return make_token(lexer, 0); }
+    if c == 41 { return make_token(lexer, 1); }
+    if c == 123 { return make_token(lexer, 2); }
+    if c == 125 { return make_token(lexer, 3); }
+    if c == 91 { return make_token(lexer, 4); }
+    if c == 93 { return make_token(lexer, 5); }
+    if c == 59 { return make_token(lexer, 6); }
+    if c == 44 { return make_token(lexer, 7); }
+    if c == 46 { return make_token(lexer, 8); }
+    if c == 58 { return make_token(lexer, 9); }
+    if c == 43 { return make_token(lexer, 10); }
+    if c == 45 { return make_token(lexer, 11); }
+    if c == 42 { return make_token(lexer, 12); }
+    if c == 47 { return make_token(lexer, 13); }
+    if c == 37 { return make_token(lexer, 14); }
+    
+    if c == 61 {
+        if lexer_match(lexer, 61) {
+            return make_token(lexer, 16);
+        }
+        return make_token(lexer, 15);
+    }
+    if c == 33 {
+        if lexer_match(lexer, 61) {
+            return make_token(lexer, 18);
+        }
+        return make_token(lexer, 17);
+    }
+    if c == 60 {
+        if lexer_match(lexer, 61) {
+            return make_token(lexer, 20);
+        }
+        return make_token(lexer, 19);
+    }
+    if c == 62 {
+        if lexer_match(lexer, 61) {
+            return make_token(lexer, 22);
+        }
+        return make_token(lexer, 21);
+    }
+    if c == 38 {
+        if lexer_match(lexer, 38) {
+            return make_token(lexer, 23);
+        }
+    }
+    if c == 124 {
+        if lexer_match(lexer, 124) {
+            return make_token(lexer, 24);
+        }
+    }
+    
+    if c == 34 {
+        return scan_string(lexer);
+    }
+    
+    return error_token(lexer);
+}
+
+fn main() {
+    let source = "fn main() { let x = 10; print x; }\0";
+    let lexer = Lexer {
+        lex_source: source,
+        lex_source_len: 34,
+        lex_start: 0,
+        lex_current: 0,
+        lex_line: 1
+    };
+    
+    print "Tokenizing:";
+    
+    let done = 0;
+    while !done {
+        let tok = lexer_next_token(lexer);
+        print tok.tok_type;
+        
+        if tok.tok_type == 38 {
+            done = 1;
+        }
+        if tok.tok_type == 39 {
+            done = 1;
+        }
+    }
+    
+    print "Done!";
+    return 0;
+}

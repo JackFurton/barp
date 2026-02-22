@@ -1,0 +1,22 @@
+fn main() {
+    // Test put_char
+    put_char(72);  // 'H'
+    put_char(105); // 'i'
+    put_char(10);  // newline
+    
+    // Test put_str
+    let s = "Hello World";
+    put_str(s, 11);
+    put_char(10);
+    
+    // Test put_int
+    put_int(42);
+    put_char(10);
+    
+    put_int(123);
+    put_char(32);  // space
+    put_int(456);
+    put_char(10);
+    
+    return 0;
+}
