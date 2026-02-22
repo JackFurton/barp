@@ -390,11 +390,7 @@ fn str_eq(src, start1, len1, start2, len2) {
     if len1 != len2 { return 0; }
     let i = 0;
     while i < len1 {
-        let c1 = char_at(src, start1 + i);
-        let c2 = char_at(src, start2 + i);
-        print c1;  // DEBUG
-        print c2;  // DEBUG
-        if c1 != c2 {
+        if char_at(src, start1 + i) != char_at(src, start2 + i) {
             return 0;
         }
         i = i + 1;
@@ -404,22 +400,12 @@ fn str_eq(src, start1, len1, start2, len2) {
 
 // Find a local variable, returns stack offset or 0 if not found
 fn sym_find(cmp, name_start, name_len) {
-    print cmp.cmp_sym_count;  // DEBUG
-    print name_start;  // DEBUG
-    print name_len;    // DEBUG
     let i = 0;
     while i < cmp.cmp_sym_count {
         let s = arr_get(cmp.cmp_sym_starts, i);
         let l = arr_get(cmp.cmp_sym_lens, i);
-        print s;  // DEBUG
-        print l;  // DEBUG
-        let eq = str_eq(cmp.cmp_source, name_start, name_len, s, l);
-        print eq;  // DEBUG - should be 1 if equal
-        if eq {
-            print 999;  // DEBUG - should see this if match found
-            let off = arr_get(cmp.cmp_sym_offsets, i);
-            print off;  // DEBUG - should be -8
-            return off;
+        if str_eq(cmp.cmp_source, name_start, name_len, s, l) {
+            return arr_get(cmp.cmp_sym_offsets, i);
         }
         i = i + 1;
     }
@@ -732,7 +718,7 @@ fn parse_primary(cmp, out, pos) {
             // Load array base address first
             let offset = sym_find(cmp, name_start, name_len);
             if offset == 0 {
-                print "Undefined variable (ARRAY)";
+                print "Undefined variable";
                 cmp.cmp_had_error = 1;
             }
             pos = emit_str(out, pos, "    ldr x1, [x29, #", 19);
@@ -756,14 +742,13 @@ fn parse_primary(cmp, out, pos) {
         }
         
         // Variable reference - load from stack
-        print 8888;  // DEBUG - entering variable lookup
-        let offset = sym_find(cmp, name_start, name_len);
-        if offset == 0 {
-            print "Undefined variable (VAR)";
+        let var_offset = sym_find(cmp, name_start, name_len);
+        if var_offset == 0 {
+            print "Undefined variable";
             cmp.cmp_had_error = 1;
         }
         pos = emit_str(out, pos, "    ldr x0, [x29, #", 19);
-        pos = emit_int(out, pos, offset);
+        pos = emit_int(out, pos, var_offset);
         pos = emit_str(out, pos, "]\n", 2);
         return pos;
     }
@@ -1059,13 +1044,86 @@ fn parse_statement(cmp, out, pos) {
     }
     
     if match_tok(cmp, TOK_IDENT()) {
-        // Assignment: ident = expr;
+        // Could be assignment (ident = expr;) or expression statement (call();)
         let name_start = cmp.cmp_prev_start;
         let name_len = cmp.cmp_prev_len;
-        return parse_assign(cmp, out, pos, name_start, name_len);
+        
+        // Check if next token is '=' for assignment
+        if check(cmp, TOK_EQ()) {
+            return parse_assign(cmp, out, pos, name_start, name_len);
+        }
+        
+        // Otherwise it's an expression statement starting with this identifier
+        // We need to "unparse" - put the identifier back and parse as expression
+        // But we can't really unparse, so we handle the call inline here
+        
+        // Check for function call: ident(args)
+        if check(cmp, TOK_LPAREN()) {
+            next_token(cmp);  // consume '('
+            
+            // Parse arguments and push to stack
+            let arg_count = 0;
+            if !check(cmp, TOK_RPAREN()) {
+                pos = parse_expression(cmp, out, pos);
+                pos = emit_str(out, pos, "    str x0, [sp, #-16]!\n", 24);
+                arg_count = arg_count + 1;
+                
+                while check(cmp, TOK_COMMA()) {
+                    next_token(cmp);
+                    pos = parse_expression(cmp, out, pos);
+                    pos = emit_str(out, pos, "    str x0, [sp, #-16]!\n", 24);
+                    arg_count = arg_count + 1;
+                }
+            }
+            consume(cmp, TOK_RPAREN());
+            consume(cmp, TOK_SEMI());
+            
+            // Check for builtins
+            if name_is(cmp.cmp_source, name_start, name_len, "put_str\0", 7) {
+                pos = emit_str(out, pos, "    ldr x2, [sp], #16\n", 22);
+                pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
+                pos = emit_str(out, pos, "    mov x0, #1\n", 15);
+                pos = emit_str(out, pos, "    mov x8, #64\n", 16);
+                pos = emit_str(out, pos, "    svc #0\n", 11);
+                return pos;
+            }
+            if name_is(cmp.cmp_source, name_start, name_len, "put_char\0", 8) {
+                pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);
+                pos = emit_str(out, pos, "    str x1, [sp, #-16]!\n", 24);
+                pos = emit_str(out, pos, "    mov x0, #1\n", 15);
+                pos = emit_str(out, pos, "    mov x1, sp\n", 15);
+                pos = emit_str(out, pos, "    mov x2, #1\n", 15);
+                pos = emit_str(out, pos, "    mov x8, #64\n", 16);
+                pos = emit_str(out, pos, "    svc #0\n", 11);
+                pos = emit_str(out, pos, "    add sp, sp, #16\n", 20);
+                return pos;
+            }
+            
+            // Regular function call
+            if arg_count >= 1 {
+                let r = arg_count - 1;
+                while r >= 0 {
+                    pos = emit_str(out, pos, "    ldr x", 9);
+                    pos = emit_int(out, pos, r);
+                    pos = emit_str(out, pos, ", [sp], #16\n", 12);
+                    r = r - 1;
+                }
+            }
+            pos = emit_str(out, pos, "    bl ", 7);
+            str_copy(out + pos, cmp.cmp_source + name_start, name_len);
+            pos = pos + name_len;
+            pos = emit_str(out, pos, "\n", 1);
+            return pos;
+        }
+        
+        // Must be an expression, but we already consumed the ident...
+        // This is a problem - we'll error for now
+        print "Unexpected identifier in statement";
+        cmp.cmp_had_error = 1;
+        return pos;
     }
     
-    // Expression statement
+    // Expression statement (starting with something other than ident)
     pos = parse_expression(cmp, out, pos);
     consume(cmp, TOK_SEMI());
     return pos;
@@ -1332,11 +1390,11 @@ fn compile(cmp, out) {
 // ============ TEST ============
 fn main() {
     // Test: strings!
-    let source = "fn foo(x) { return x; } fn main() { print foo(5); return 0; }\0";
+    let source = "fn main() { let s = \"Hello\"; put_str(s, 5); put_char(10); return 0; }\0";
     
     let cmp = Compiler {
         cmp_source: source,
-        cmp_source_len: 61,
+        cmp_source_len: 69,
         cmp_start: 0,
         cmp_current: 0,
         cmp_line: 1,
