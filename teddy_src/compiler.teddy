@@ -891,6 +891,13 @@ fn parse_primary(cmp, out, pos) {
                 return pos;
             }
             
+            // print_char(ch) - output single ASCII character
+            if name_is(cmp.cmp_source, prim_name_start, prim_name_len, "print_char\0", 10) {
+                pos = emit_str(out, pos, "    ldr x0, [sp], #16\n", 22);
+                pos = emit_str(out, pos, "    bl print_char\n", 18);
+                return pos;
+            }
+            
             // alloc(size) - allocate memory via mmap
             if name_is(cmp.cmp_source, prim_name_start, prim_name_len, "alloc\0", 5) {
                 pos = emit_str(out, pos, "    ldr x1, [sp], #16\n", 22);  // size
@@ -1705,6 +1712,21 @@ fn emit_runtime(out, pos) {
     pos = emit_str(out, pos, "    mov x1, x11\n", 16);
     pos = emit_str(out, pos, "    mov x2, sp\n", 15);
     pos = emit_str(out, pos, "    sub x2, x2, x11\n", 20);
+    pos = emit_str(out, pos, "    mov x8, #64\n", 16);
+    pos = emit_str(out, pos, "    svc #0\n", 11);
+    pos = emit_str(out, pos, "    mov sp, x29\n", 16);
+    pos = emit_str(out, pos, "    ldp x29, x30, [sp], #16\n", 28);
+    pos = emit_str(out, pos, "    ret\n", 8);
+    
+    // print_char: output single ASCII character (in x0)
+    pos = emit_str(out, pos, "\nprint_char:\n", 13);
+    pos = emit_str(out, pos, "    stp x29, x30, [sp, #-16]!\n", 30);
+    pos = emit_str(out, pos, "    mov x29, sp\n", 16);
+    pos = emit_str(out, pos, "    sub sp, sp, #16\n", 20);
+    pos = emit_str(out, pos, "    strb w0, [sp]\n", 18);
+    pos = emit_str(out, pos, "    mov x0, #1\n", 15);
+    pos = emit_str(out, pos, "    mov x1, sp\n", 15);
+    pos = emit_str(out, pos, "    mov x2, #1\n", 15);
     pos = emit_str(out, pos, "    mov x8, #64\n", 16);
     pos = emit_str(out, pos, "    svc #0\n", 11);
     pos = emit_str(out, pos, "    mov sp, x29\n", 16);

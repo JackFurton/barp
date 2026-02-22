@@ -1,0 +1,103 @@
+// Brainfuck Interpreter in Teddy
+// Tests: loops, arrays, memory operations
+//
+// BF commands:
+//   >  increment pointer
+//   <  decrement pointer  
+//   +  increment byte at pointer
+//   -  decrement byte at pointer
+//   .  output byte at pointer
+//   ,  input byte (not implemented - no input yet)
+//   [  jump past ] if byte is zero
+//   ]  jump back to [ if byte is nonzero
+
+fn main() {
+    // Memory tape - 256 cells
+    let tape = alloc(256 * 8);
+    
+    // Initialize tape to zeros
+    let init_i = 0;
+    while init_i < 256 {
+        poke(tape + init_i * 8, 0);
+        init_i = init_i + 1;
+    }
+    
+    // Data pointer
+    let dp = 0;
+    
+    // Program: Hello World in Brainfuck
+    // ++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.
+    let prog = "++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.\0";
+    let prog_len = 106;
+    
+    // Instruction pointer
+    let ip = 0;
+    
+    while ip < prog_len {
+        let cmd = char_at(prog, ip);
+        
+        if cmd == 62 {
+            // > - move pointer right
+            dp = dp + 1;
+        }
+        if cmd == 60 {
+            // < - move pointer left
+            dp = dp - 1;
+        }
+        if cmd == 43 {
+            // + - increment cell
+            let val = peek(tape + dp * 8);
+            poke(tape + dp * 8, val + 1);
+        }
+        if cmd == 45 {
+            // - - decrement cell
+            let val2 = peek(tape + dp * 8);
+            poke(tape + dp * 8, val2 - 1);
+        }
+        if cmd == 46 {
+            // . - output cell as ASCII
+            let out_val = peek(tape + dp * 8);
+            print_char(out_val);
+        }
+        if cmd == 91 {
+            // [ - jump forward past ] if cell is zero
+            let cell_val = peek(tape + dp * 8);
+            if cell_val == 0 {
+                // Find matching ]
+                let bracket_depth = 1;
+                while bracket_depth > 0 {
+                    ip = ip + 1;
+                    let look_cmd = char_at(prog, ip);
+                    if look_cmd == 91 {
+                        bracket_depth = bracket_depth + 1;
+                    }
+                    if look_cmd == 93 {
+                        bracket_depth = bracket_depth - 1;
+                    }
+                }
+            }
+        }
+        if cmd == 93 {
+            // ] - jump back to [ if cell is nonzero
+            let cell_val2 = peek(tape + dp * 8);
+            if cell_val2 != 0 {
+                // Find matching [
+                let bracket_depth2 = 1;
+                while bracket_depth2 > 0 {
+                    ip = ip - 1;
+                    let look_cmd2 = char_at(prog, ip);
+                    if look_cmd2 == 93 {
+                        bracket_depth2 = bracket_depth2 + 1;
+                    }
+                    if look_cmd2 == 91 {
+                        bracket_depth2 = bracket_depth2 - 1;
+                    }
+                }
+            }
+        }
+        
+        ip = ip + 1;
+    }
+    
+    return 0;
+}
