@@ -1371,6 +1371,40 @@ fn parse_assign(cmp, out, pos, assign_nm_start, assign_nm_len) {
 
 // Parse print statement: print expr;
 fn parse_print(cmp, out, pos) {
+    // Check if printing a string literal
+    if check(cmp, TOK_STRING()) {
+        // Get string info before advancing
+        next_token(cmp);
+        let str_start = cmp.cmp_prev_start + 1;
+        let str_len = cmp.cmp_prev_len - 2;
+        let str_idx = cmp.cmp_str_count;
+        
+        arr_set(cmp.cmp_str_starts, str_idx, str_start);
+        arr_set(cmp.cmp_str_lens, str_idx, str_len);
+        cmp.cmp_str_count = cmp.cmp_str_count + 1;
+        
+        // Load string address into x0
+        pos = emit_str(out, pos, "    adrp x0, .str", 17);
+        pos = emit_int(out, pos, str_idx);
+        pos = emit_str(out, pos, "\n", 1);
+        pos = emit_str(out, pos, "    add x0, x0, :lo12:.str", 26);
+        pos = emit_int(out, pos, str_idx);
+        pos = emit_str(out, pos, "\n", 1);
+        
+        // Load length into x1 and call print_str
+        pos = emit_str(out, pos, "    mov x1, #", 13);
+        pos = emit_int(out, pos, str_len);
+        pos = emit_str(out, pos, "\n", 1);
+        pos = emit_str(out, pos, "    bl print_str\n", 17);
+        // Print newline after string
+        pos = emit_str(out, pos, "    mov x0, #10\n", 16);
+        pos = emit_str(out, pos, "    bl print_char\n", 18);
+        
+        consume(cmp, TOK_SEMI());
+        return pos;
+    }
+    
+    // Otherwise, print as integer
     pos = parse_expression(cmp, out, pos);
     consume(cmp, TOK_SEMI());
     pos = emit_str(out, pos, "    bl print_int\n", 17);
