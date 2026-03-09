@@ -1,0 +1,12 @@
+// Test: negative array index bounds checking
+
+fn main() {
+    let arr = [10, 20, 30];
+    
+    // Negative index should fail
+    print arr[0 - 1];
+    
+    // Should never reach here
+    print 999;
+    return 0;
+}

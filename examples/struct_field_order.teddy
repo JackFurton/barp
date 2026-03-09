@@ -1,0 +1,34 @@
+// Test: structs with same field names in DIFFERENT ORDER
+// This is the real killer case - without the fix, field offsets are wrong
+
+struct Foo {
+    a,
+    b,
+    c
+}
+
+struct Bar {
+    c,
+    b,
+    a
+}
+
+fn main() {
+    let f = Foo { a: 1, b: 2, c: 3 };
+    let b = Bar { c: 30, b: 20, a: 10 };
+
+    // In Foo: a is at offset 0, b at offset 8, c at offset 16
+    // In Bar: c is at offset 0, b at offset 8, a at offset 16
+    // Without the fix, b.a would look up 'a' in Foo and get offset 0 (wrong!)
+    // With the fix, b.a correctly resolves to offset 16 in Bar
+
+    print f.a;
+    print f.b;
+    print f.c;
+
+    print b.a;
+    print b.b;
+    print b.c;
+
+    return 0;
+}

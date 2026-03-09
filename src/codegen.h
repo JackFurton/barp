@@ -17,7 +17,8 @@ typedef struct {
     // Simple symbol table for local variables
     struct {
         char *name;
-        int offset;      // Offset from rbp
+        int offset;        // Offset from rbp
+        char *struct_type; // Struct type name (NULL if not a struct)
     } locals[256];
     int local_count;
     

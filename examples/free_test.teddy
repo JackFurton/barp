@@ -1,0 +1,35 @@
+// Test: alloc and free (munmap) - verifies issue #5 fix
+
+fn main() {
+    // Allocate some memory
+    let buf = alloc(1024);
+    
+    // Write to it
+    poke(buf, 42);
+    poke(buf + 8, 99);
+    
+    // Read back
+    let a = peek(buf);
+    let b = peek(buf + 8);
+    print a;
+    print b;
+    
+    // Free it
+    free(buf, 1024);
+    
+    // Allocate and free in a loop to prove no leak
+    let i = 0;
+    while i < 100 {
+        let mem = alloc(131072);
+        poke(mem, i);
+        let val = peek(mem);
+        free(mem, 131072);
+        i = i + 1;
+    }
+    
+    // If we leaked, 100 * 128KB = 12.8MB would be gone
+    // With free, memory is returned to the OS
+    print 100;
+    
+    return 0;
+}

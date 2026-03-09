@@ -1,0 +1,18 @@
+// Test: array bounds checking (issue #4)
+// This should print an error and exit
+
+fn main() {
+    let arr = [10, 20, 30];
+    
+    // Valid access - should work
+    print arr[0];
+    print arr[1];
+    print arr[2];
+    
+    // Out of bounds! index 3 on length 3 array
+    print arr[3];
+    
+    // Should never reach here
+    print 999;
+    return 0;
+}

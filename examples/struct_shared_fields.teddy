@@ -1,0 +1,35 @@
+// Test: two structs with the same field names
+// This was broken before issue #2 fix - field lookup was global
+
+struct Point {
+    x,
+    y
+}
+
+struct Size {
+    x,
+    y
+}
+
+fn main() {
+    let p = Point { x: 10, y: 20 };
+    let s = Size { x: 100, y: 200 };
+
+    // These should resolve to each struct's own fields
+    print p.x;
+    print p.y;
+    print s.x;
+    print s.y;
+
+    // Mutation should also work correctly
+    p.x = 42;
+    s.x = 999;
+    print p.x;
+    print s.x;
+
+    // Sum from different structs
+    let total = p.x + s.x;
+    print total;
+
+    return 0;
+}

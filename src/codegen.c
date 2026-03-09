@@ -68,11 +68,34 @@ static char *my_strdup(const char *s) {
 }
 
 static int add_local(CodeGen *gen, const char *name) {
+    if (gen->local_count >= 256) {
+        fprintf(stderr, "Error: too many local variables (max 256)\n");
+        exit(1);
+    }
     gen->stack_offset -= 8;  // Each local takes 8 bytes
     gen->locals[gen->local_count].name = my_strdup(name);
     gen->locals[gen->local_count].offset = gen->stack_offset;
+    gen->locals[gen->local_count].struct_type = NULL;
     gen->local_count++;
     return gen->stack_offset;
+}
+
+// Set the struct type for the most recently added local variable
+static void set_local_type(CodeGen *gen, const char *struct_type) {
+    if (gen->local_count > 0 && struct_type) {
+        free(gen->locals[gen->local_count - 1].struct_type);
+        gen->locals[gen->local_count - 1].struct_type = my_strdup(struct_type);
+    }
+}
+
+// Find the struct type of a local variable (returns NULL if not a struct)
+static const char *find_local_type(CodeGen *gen, const char *name) {
+    for (int i = gen->local_count - 1; i >= 0; i--) {
+        if (strcmp(gen->locals[i].name, name) == 0) {
+            return gen->locals[i].struct_type;
+        }
+    }
+    return NULL;
 }
 
 // Emit load from [x29, #offset] with large offset support
@@ -116,6 +139,7 @@ static void emit_sub_fp(CodeGen *gen, int neg_offset) {
 static void clear_locals(CodeGen *gen) {
     for (int i = 0; i < gen->local_count; i++) {
         free(gen->locals[i].name);
+        free(gen->locals[i].struct_type);
     }
     gen->local_count = 0;
     gen->stack_offset = 0;
@@ -123,6 +147,10 @@ static void clear_locals(CodeGen *gen) {
 }
 
 static void push_scope(CodeGen *gen) {
+    if (gen->scope_depth >= 64) {
+        fprintf(stderr, "Error: too many nested scopes (max 64)\n");
+        exit(1);
+    }
     gen->scope_stack[gen->scope_depth] = gen->local_count;
     gen->scope_depth++;
 }
@@ -133,6 +161,7 @@ static void pop_scope(CodeGen *gen) {
     // Free variable names that are going out of scope
     for (int i = old_count; i < gen->local_count; i++) {
         free(gen->locals[i].name);
+        free(gen->locals[i].struct_type);
     }
     gen->local_count = old_count;
     // Note: we don't restore stack_offset because the stack space is still allocated
@@ -232,6 +261,23 @@ static const char* find_enum_for_variant(CodeGen *gen, const char *variant_name)
     return NULL;
 }
 
+// ============ TYPE INFERENCE ============
+
+// Infer the struct type of an expression (returns NULL if not a struct)
+static const char *infer_struct_type(CodeGen *gen, Expr *expr) {
+    switch (expr->type) {
+        case EXPR_STRUCT_LITERAL:
+            return expr->as.struct_literal.struct_name;
+        case EXPR_VARIABLE:
+            return find_local_type(gen, expr->as.variable.name);
+        case EXPR_CALL:
+            // Function return types aren't tracked yet - return NULL
+            return NULL;
+        default:
+            return NULL;
+    }
+}
+
 // ============ EXPRESSION CODEGEN ============
 
 static void codegen_expr(CodeGen *gen, Expr *expr);
@@ -271,6 +317,10 @@ static int add_string(CodeGen *gen, const char *value, int length) {
     }
     
     // Add new string
+    if (gen->string_count >= 256) {
+        fprintf(stderr, "Error: too many string literals (max 256)\n");
+        exit(1);
+    }
     int label = gen->string_count;
     gen->strings[gen->string_count].value = my_strdup(value);
     gen->strings[gen->string_count].length = length;
@@ -317,6 +367,11 @@ static void codegen_index(CodeGen *gen, Expr *expr) {
     
     // Evaluate index
     codegen_expr(gen, idx->index);
+    
+    // Bounds check: x0 = index, load length from array
+    emit(gen, "ldr x1, [sp]");         // peek array ptr (don't pop yet)
+    emit(gen, "ldr x1, [x1]");         // x1 = array length
+    emit(gen, "bl _bounds_check");     // check 0 <= x0 < x1
     
     // Load: base + 8 + index * 8 (skip length field)
     emit(gen, "ldr x1, [sp], #16");    // pop array ptr into x1
@@ -369,20 +424,27 @@ static void codegen_struct_literal(CodeGen *gen, Expr *expr) {
 static void codegen_field_access(CodeGen *gen, Expr *expr) {
     FieldAccessExpr *fa = &expr->as.field_access;
     
+    // Try to infer the struct type from the object expression
+    const char *stype = infer_struct_type(gen, fa->object);
+    
     // Evaluate object (get struct pointer)
     codegen_expr(gen, fa->object);
     
-    // We need to know the struct type to find the field offset
-    // For now, we'll assume the object is a variable and look it up
-    // In a real compiler we'd have type info - for now we search all structs
-    
-    // Find the field offset by searching all struct definitions
     int offset = -1;
-    for (int i = 0; i < gen->struct_count && offset < 0; i++) {
-        for (int j = 0; j < gen->structs[i].field_count; j++) {
-            if (strcmp(gen->structs[i].field_names[j], fa->field_name) == 0) {
-                offset = j * 8;
-                break;
+    
+    if (stype) {
+        // We know the struct type - look up the field in that specific struct
+        offset = find_field_offset(gen, stype, fa->field_name);
+    }
+    
+    if (offset < 0) {
+        // Fallback: search all structs (old behavior for untyped cases)
+        for (int i = 0; i < gen->struct_count && offset < 0; i++) {
+            for (int j = 0; j < gen->structs[i].field_count; j++) {
+                if (strcmp(gen->structs[i].field_names[j], fa->field_name) == 0) {
+                    offset = j * 8;
+                    break;
+                }
             }
         }
     }
@@ -707,6 +769,17 @@ static void codegen_call(CodeGen *gen, Expr *expr) {
         return;
     }
     
+    // Builtin: free(ptr, size) - free memory using munmap
+    if (strcmp(call->name, "free") == 0 && call->arg_count == 2) {
+        codegen_expr(gen, call->args[0]);  // ptr
+        emit(gen, "str x0, [sp, #-16]!");
+        codegen_expr(gen, call->args[1]);  // size
+        emit(gen, "mov x1, x0");           // x1 = size
+        emit(gen, "ldr x0, [sp], #16");    // x0 = ptr
+        emit(gen, "bl _builtin_free");
+        return;
+    }
+    
     // Builtin: str_copy(dest, src, len) - copy len bytes from src to dest
     if (strcmp(call->name, "str_copy") == 0 && call->arg_count == 3) {
         codegen_expr(gen, call->args[0]);  // dest
@@ -811,16 +884,27 @@ static void codegen_block(CodeGen *gen, Stmt *stmt) {
 static void codegen_let(CodeGen *gen, Stmt *stmt) {
     LetStmt *let = &stmt->as.let;
     
+    // Infer struct type before codegen (which may modify stack_offset)
+    const char *stype = infer_struct_type(gen, let->initializer);
+    
     // Evaluate initializer
     codegen_expr(gen, let->initializer);
     
     // Allocate stack slot and store
     int offset = add_local(gen, let->name);
     emit_str_fp(gen, "x0", offset);
+    
+    // Track the struct type of this variable
+    if (stype) {
+        set_local_type(gen, stype);
+    }
 }
 
 static void codegen_assign(CodeGen *gen, Stmt *stmt) {
     AssignStmt *assign = &stmt->as.assign;
+    
+    // Infer struct type from the value being assigned
+    const char *stype = infer_struct_type(gen, assign->value);
     
     // Evaluate value
     codegen_expr(gen, assign->value);
@@ -828,6 +912,18 @@ static void codegen_assign(CodeGen *gen, Stmt *stmt) {
     // Find existing variable and store
     int offset = find_local(gen, assign->name);
     emit_str_fp(gen, "x0", offset);
+    
+    // Update the struct type of this variable if the new value is a struct
+    if (stype) {
+        // Find the local and update its type
+        for (int i = gen->local_count - 1; i >= 0; i--) {
+            if (strcmp(gen->locals[i].name, assign->name) == 0) {
+                free(gen->locals[i].struct_type);
+                gen->locals[i].struct_type = my_strdup(stype);
+                break;
+            }
+        }
+    }
 }
 
 static void codegen_index_assign(CodeGen *gen, Stmt *stmt) {
@@ -840,6 +936,11 @@ static void codegen_index_assign(CodeGen *gen, Stmt *stmt) {
     // Evaluate index
     codegen_expr(gen, ia->index);
     emit(gen, "str x0, [sp, #-16]!");  // push index
+    
+    // Bounds check: index in x0, load length from array
+    emit(gen, "ldr x1, [sp, #16]");    // peek array ptr (2 slots back)
+    emit(gen, "ldr x1, [x1]");         // x1 = array length
+    emit(gen, "bl _bounds_check");     // check 0 <= x0 < x1
     
     // Evaluate value
     codegen_expr(gen, ia->value);
@@ -859,6 +960,9 @@ static void codegen_index_assign(CodeGen *gen, Stmt *stmt) {
 static void codegen_field_assign(CodeGen *gen, Stmt *stmt) {
     FieldAssignStmt *fa = &stmt->as.field_assign;
     
+    // Try to infer the struct type from the object expression
+    const char *stype = infer_struct_type(gen, fa->object);
+    
     // Evaluate object (get struct pointer)
     codegen_expr(gen, fa->object);
     emit(gen, "str x0, [sp, #-16]!");  // push struct ptr
@@ -870,13 +974,21 @@ static void codegen_field_assign(CodeGen *gen, Stmt *stmt) {
     // Pop struct ptr
     emit(gen, "ldr x1, [sp], #16");    // x1 = struct ptr
     
-    // Find field offset by searching all struct definitions
     int offset = -1;
-    for (int i = 0; i < gen->struct_count && offset < 0; i++) {
-        for (int j = 0; j < gen->structs[i].field_count; j++) {
-            if (strcmp(gen->structs[i].field_names[j], fa->field_name) == 0) {
-                offset = j * 8;
-                break;
+    
+    if (stype) {
+        // We know the struct type - look up the field in that specific struct
+        offset = find_field_offset(gen, stype, fa->field_name);
+    }
+    
+    if (offset < 0) {
+        // Fallback: search all structs (old behavior for untyped cases)
+        for (int i = 0; i < gen->struct_count && offset < 0; i++) {
+            for (int j = 0; j < gen->structs[i].field_count; j++) {
+                if (strcmp(gen->structs[i].field_names[j], fa->field_name) == 0) {
+                    offset = j * 8;
+                    break;
+                }
             }
         }
     }
@@ -1307,6 +1419,26 @@ static void emit_alloc_and_strings(CodeGen *gen) {
     emit(gen, "ldp x29, x30, [sp], #16");
     emit(gen, "ret");
     
+    // _builtin_free: x0 = ptr, x1 = size - free memory using munmap
+    emit_raw(gen, "");
+    emit_raw(gen, "// Builtin: free (uses munmap)");
+    emit_raw(gen, "_builtin_free:");
+    emit(gen, "stp x29, x30, [sp, #-16]!");
+    emit(gen, "mov x29, sp");
+    
+    // Round up size to page boundary (same as alloc)
+    emit(gen, "add x1, x1, #4095");
+    emit(gen, "and x1, x1, #-4096");
+    
+    // munmap(ptr, size)
+    // x0 already has ptr
+    // x1 already has rounded size
+    emit(gen, "mov x8, #215");         // sys_munmap
+    emit(gen, "svc #0");
+    
+    emit(gen, "ldp x29, x30, [sp], #16");
+    emit(gen, "ret");
+    
     // _builtin_int_to_str: x0 = dest buffer, x1 = number, returns length in x0
     emit_raw(gen, "");
     emit_raw(gen, "// Builtin: int_to_str");
@@ -1362,6 +1494,105 @@ static void emit_alloc_and_strings(CodeGen *gen) {
     emit(gen, "ret");
 }
 
+static void emit_bounds_check(CodeGen *gen) {
+    // _bounds_check: x0 = index, x1 = array length
+    // If index < 0 or index >= length, print error to stderr and exit(1)
+    // Preserves x0 (index) on success
+    emit_raw(gen, "");
+    emit_raw(gen, "// Runtime: bounds check");
+    emit_raw(gen, "_bounds_check:");
+    // Fast path: check bounds without full frame setup
+    emit(gen, "cmp x0, #0");
+    emit(gen, "b.lt .bounds_fail_setup");
+    emit(gen, "cmp x0, x1");
+    emit(gen, "b.ge .bounds_fail_setup");
+    emit(gen, "ret");                   // x0 preserved, return immediately
+    
+    // Slow path: bounds check failed - set up frame, print error, exit
+    emit_raw(gen, ".bounds_fail_setup:");
+    emit(gen, "stp x29, x30, [sp, #-16]!");
+    emit(gen, "mov x29, sp");
+    emit(gen, "sub sp, sp, #64");
+    emit(gen, "str x0, [x29, #-8]");    // save index
+    emit(gen, "str x1, [x29, #-16]");   // save length
+    
+    // Print "Error: array index out of bounds (index=" to stderr
+    emit(gen, "mov x0, #2");            // stderr
+    emit(gen, "adrp x1, .bounds_msg1");
+    emit(gen, "add x1, x1, :lo12:.bounds_msg1");
+    emit(gen, "mov x2, #40");
+    emit(gen, "mov x8, #64");
+    emit(gen, "svc #0");
+    
+    // Print the index value to stderr (inline int-to-string)
+    emit(gen, "ldr x0, [x29, #-8]");
+    emit(gen, "bl _put_int_stderr");
+    
+    // Print ", length=" to stderr
+    emit(gen, "mov x0, #2");            // stderr
+    emit(gen, "adrp x1, .bounds_msg2");
+    emit(gen, "add x1, x1, :lo12:.bounds_msg2");
+    emit(gen, "mov x2, #9");
+    emit(gen, "mov x8, #64");
+    emit(gen, "svc #0");
+    
+    // Print the length value to stderr
+    emit(gen, "ldr x0, [x29, #-16]");
+    emit(gen, "bl _put_int_stderr");
+    
+    // Print ")\n" to stderr
+    emit(gen, "mov x0, #41");           // ')'
+    emit(gen, "strb w0, [sp]");
+    emit(gen, "mov x0, #10");           // '\n'
+    emit(gen, "strb w0, [sp, #1]");
+    emit(gen, "mov x0, #2");            // stderr
+    emit(gen, "mov x1, sp");
+    emit(gen, "mov x2, #2");
+    emit(gen, "mov x8, #64");
+    emit(gen, "svc #0");
+    
+    // Exit with code 1
+    emit(gen, "mov x0, #1");
+    emit(gen, "mov x8, #93");
+    emit(gen, "svc #0");
+    
+    // _put_int_stderr: print integer in x0 to stderr (no newline)
+    emit_raw(gen, "");
+    emit_raw(gen, "_put_int_stderr:");
+    emit(gen, "stp x29, x30, [sp, #-16]!");
+    emit(gen, "mov x29, sp");
+    emit(gen, "sub sp, sp, #32");
+    emit(gen, "mov x9, x0");
+    emit(gen, "mov x10, #0");           // negative flag
+    emit(gen, "cmp x9, #0");
+    emit(gen, "b.ge .stderr_pos");
+    emit(gen, "mov x10, #1");
+    emit(gen, "neg x9, x9");
+    emit_raw(gen, ".stderr_pos:");
+    emit(gen, "mov x11, sp");
+    emit(gen, "mov x13, #10");
+    emit_raw(gen, ".stderr_loop:");
+    emit(gen, "udiv x14, x9, x13");
+    emit(gen, "msub x15, x14, x13, x9");
+    emit(gen, "add x15, x15, #48");
+    emit(gen, "strb w15, [x11, #-1]!");
+    emit(gen, "mov x9, x14");
+    emit(gen, "cbnz x9, .stderr_loop");
+    emit(gen, "cbz x10, .stderr_write");
+    emit(gen, "mov x12, #45");          // '-'
+    emit(gen, "strb w12, [x11, #-1]!");
+    emit_raw(gen, ".stderr_write:");
+    emit(gen, "mov x0, #2");            // stderr (fd 2)
+    emit(gen, "mov x1, x11");
+    emit(gen, "mov x2, sp");
+    emit(gen, "sub x2, x2, x11");
+    emit(gen, "mov x8, #64");
+    emit(gen, "svc #0");
+    emit(gen, "mov sp, x29");
+    emit(gen, "ldp x29, x30, [sp], #16");
+    emit(gen, "ret");
+}
+
 static void emit_start(CodeGen *gen) {
     emit_raw(gen, "");
     emit_raw(gen, "_start:");
@@ -1371,11 +1602,10 @@ static void emit_start(CodeGen *gen) {
 }
 
 static void emit_data_section(CodeGen *gen) {
-    if (gen->string_count == 0) return;
-    
     emit_raw(gen, "");
     emit_raw(gen, ".data");
     
+    // User string literals
     for (int i = 0; i < gen->string_count; i++) {
         emit_raw(gen, ".str%d:", gen->strings[i].label);
         fprintf(gen->out, "    .ascii \"");
@@ -1394,6 +1624,12 @@ static void emit_data_section(CodeGen *gen) {
         }
         fprintf(gen->out, "\"\n");
     }
+    
+    // Runtime error messages
+    emit_raw(gen, ".bounds_msg1:");
+    emit_raw(gen, "    .ascii \"Error: array index out of bounds (index=\"");
+    emit_raw(gen, ".bounds_msg2:");
+    emit_raw(gen, "    .ascii \", length=\"");
 }
 
 void codegen_init(CodeGen *gen, FILE *out) {
@@ -1409,6 +1645,10 @@ void codegen_init(CodeGen *gen, FILE *out) {
 void codegen_program(CodeGen *gen, Program *prog) {
     // Store struct definitions for field lookup
     for (int i = 0; i < prog->struct_count; i++) {
+        if (gen->struct_count >= 64) {
+            fprintf(stderr, "Error: too many struct definitions (max 64)\n");
+            exit(1);
+        }
         StructDef *sd = prog->structs[i];
         gen->structs[gen->struct_count].name = my_strdup(sd->name);
         gen->structs[gen->struct_count].field_names = malloc(sizeof(char*) * sd->field_count);
@@ -1421,6 +1661,10 @@ void codegen_program(CodeGen *gen, Program *prog) {
     
     // Store enum definitions for variant value lookup
     for (int i = 0; i < prog->enum_count; i++) {
+        if (gen->enum_count >= 64) {
+            fprintf(stderr, "Error: too many enum definitions (max 64)\n");
+            exit(1);
+        }
         EnumDef *ed = prog->enums[i];
         gen->enums[gen->enum_count].name = my_strdup(ed->name);
         gen->enums[gen->enum_count].variant_names = malloc(sizeof(char*) * ed->variant_count);
@@ -1448,6 +1692,7 @@ void codegen_program(CodeGen *gen, Program *prog) {
     emit_print_int_raw(gen);
     emit_file_io(gen);
     emit_alloc_and_strings(gen);
+    emit_bounds_check(gen);
     
     // Functions
     for (int i = 0; i < prog->function_count; i++) {

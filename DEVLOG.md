@@ -14,42 +14,197 @@ Think: Rust's expressiveness + effect tracking + powerful macros, but starting s
 
 ### Feature Roadmap
 
-**Phase 1: Core Language (Current)**
+**Phase 1: Core Language** (DONE)
 - [x] Functions, variables, basic types
 - [x] Structs with fields
 - [x] Arrays
-- [ ] Type annotations
-- [ ] Better error messages
+- [x] Self-hosting compiler
 
-**Phase 2: Expressive Types**
+**Phase 2: Expressive Types** (MOSTLY DONE)
 - [x] Enums (simple)
 - [x] Enums with data (ADTs)
 - [x] Pattern matching (`match`)
-- [x] Option<T> / Result<T,E> style enums (no generics yet, but pattern works)
-- [ ] Generics
+- [x] Struct field type tracking (issue #2 fix)
+- [ ] Generics (`Option<T>`, `Result<T,E>`, `Vec<T>`)
+- [ ] Multi-field enum payloads (`Err(code, msg)`)
+- [ ] Exhaustive match checking
+- [ ] Tuple types (`(int, string)`)
+- [ ] Type aliases (`type Point = { x: int, y: int }`)
 
-**Phase 3: Effect System**
+**Phase 3: Language Ergonomics**
+- [ ] `for` loops (`for i in 0..10`, `for x in array`)
+- [ ] `else if` chains (no nesting needed)
+- [ ] `break` / `continue`
+- [ ] String interpolation (`"hello {name}"`)
+- [ ] Closures / anonymous functions (`|x| x + 1`)
+- [ ] First-class functions (pass functions as args)
+- [ ] Methods on structs (`impl Point { fn distance(...) }`)
+- [ ] Operator overloading
+- [ ] Destructuring (`let (a, b) = pair;`, `let Point { x, y } = p;`)
+- [ ] Default parameter values
+- [ ] Named arguments
+
+**Phase 4: Type System**
+- [ ] Full type checker (enforce type annotations)
+- [ ] Type inference (Hindley-Milner style)
+- [ ] Traits / interfaces (`trait Printable { fn to_string(self) -> string }`)
+- [ ] Trait bounds on generics (`fn sort<T: Ord>(arr: Vec<T>)`)
+- [ ] Associated types
+- [ ] Const generics (`Array<T, N>`)
+- [ ] Sum types as first-class (not just enums)
+
+**Phase 5: Ownership & Memory Safety**
+- [ ] Linear types / move semantics (use-once, transfer ownership)
+- [ ] Borrow checker (references with lifetime tracking)
+- [ ] Region-based memory management
+- [ ] `&T` (shared ref) and `&mut T` (unique ref)
+- [ ] Automatic drop/destructor calls
+- [ ] Stack vs heap analysis (escape analysis)
+- [ ] Arena allocators as a language primitive
+- [ ] No-GC guarantee with compile-time memory safety
+
+**Phase 6: Effect System & Capabilities**
 - [ ] Effect annotations (`fn foo() with IO`)
-- [ ] Pure functions (no effects)
+- [ ] Pure functions (no effects) - compiler enforced
 - [ ] Effect inference
-- [ ] Effect polymorphism
+- [ ] Effect polymorphism (`fn map<F, E>(f: F) with E`)
+- [ ] Effect handlers (algebraic effects a la Koka/Eff)
+- [ ] Capability-based security (`fn serve(cap: NetCap)`)
+- [ ] Effect rows / sets
+- [ ] Resumable effects (delimited continuations)
+- [ ] Built-in effects: `IO`, `Alloc`, `Panic`, `Async`, `State<T>`
 
-**Phase 4: Metaprogramming**
-- [ ] Compile-time constants
-- [ ] Simple macros
-- [ ] Procedural macros
-- [ ] Compile-time execution
+**Phase 7: Concurrency & Async**
+- [ ] Async/await with effect tracking (`fn fetch() with Async, IO`)
+- [ ] Structured concurrency (nurseries / task groups)
+- [ ] Channels (typed, bounded)
+- [ ] Actors (lightweight, message-passing)
+- [ ] Data-race freedom via ownership (Send/Sync traits)
+- [ ] Green threads / coroutines
+- [ ] Parallel iterators
 
-**Phase 5: Polish**
-- [ ] Module system
-- [ ] Standard library
-- [ ] Package manager
-- [ ] Great error messages
-- [ ] LSP server
+**Phase 8: Metaprogramming & Compile-Time**
+- [ ] Compile-time constants (`const N = 10`)
+- [ ] `comptime` blocks (evaluate arbitrary code at compile time)
+- [ ] Compile-time reflection (inspect types, fields, methods)
+- [ ] Hygienic macros (pattern-based)
+- [ ] Procedural macros (code that generates code)
+- [ ] Derive macros (`#[derive(Debug, Eq)]`)
+- [ ] Custom DSLs via macro system
+- [ ] Compile-time string processing (regex, SQL, etc.)
+
+**Phase 9: Module System & Tooling**
+- [ ] Multi-file compilation (`import math;`)
+- [ ] Namespaces / module paths (`math::sqrt`)
+- [ ] Visibility modifiers (`pub`, `priv`)
+- [ ] Package manifest (`teddy.toml`)
+- [ ] Package manager / registry
+- [ ] Build system with dependency resolution
+- [ ] Standard library (collections, IO, strings, math, net)
+- [ ] FFI (call C functions, export to C)
+
+**Phase 10: Developer Experience**
+- [ ] Great error messages with source spans and suggestions
+- [ ] LSP server (autocomplete, go-to-def, hover types)
+- [ ] Formatter (`teddy fmt`)
+- [ ] Linter (`teddy lint`)
+- [ ] REPL / playground
+- [ ] Documentation generator
+- [ ] Test framework built-in (`teddy test`)
+- [ ] Benchmarking framework
+- [ ] Debugger integration (DWARF debug info)
+
+**Phase 11: Backend & Performance**
+- [ ] x86-64 backend (in addition to ARM64)
+- [ ] LLVM backend (unlock optimizations)
+- [ ] WebAssembly backend
+- [ ] Incremental compilation
+- [ ] Link-time optimization
+- [ ] Compile-time evaluation / constant folding
+- [ ] Inlining / devirtualization
+- [ ] SIMD intrinsics
+
+**Moonshot Ideas**
+- [ ] Dependent types (types that depend on values)
+- [ ] Proof system (lightweight verification, like Lean-lite)
+- [ ] Hot code reloading
+- [ ] GPU compute shaders as Teddy functions
+- [ ] Formal memory safety proof (certified compiler)
+- [ ] Capability-secure sandboxing (Wasm-style isolation)
+- [ ] Self-modifying compilation (compiler learns from usage patterns)
 
 ---
 
 **Near-term Goal: Self-hosting** - ~~Rewrite the compiler in Teddy itself.~~ **ACHIEVED!**
+
+---
+
+## Session 9 - Issues #2, #4, #5 Fixed + Roadmap (2026-03-09)
+
+### Issue #2: Struct field names must be globally unique - DONE
+
+Field access (`p.x`) and field assignment (`p.x = 5`) searched ALL struct definitions for the field name. If two structs had a field with the same name, the wrong offset could be used:
+
+```teddy
+struct Foo { a, b, c }
+struct Bar { c, b, a }  // Same fields, different order!
+
+let b = Bar { c: 30, b: 20, a: 10 };
+print b.a;  // BUG: found 'a' in Foo (offset 0), got 30 instead of 10!
+```
+
+**Fix:** Added lightweight struct type tracking to the code generator:
+
+1. **`struct_type` field on locals** - Each variable in the symbol table now tracks what struct type it holds (or NULL if not a struct)
+2. **Type inference** - `infer_struct_type()` determines the struct type from expressions (struct literals, variables, propagates through let/assign)
+3. **Scoped field lookup** - `codegen_field_access` and `codegen_field_assign` check the inferred type first, falls back to global search for untyped cases
+
+### Issue #5: read_file leaks 128KB memory per call - DONE
+
+**Fix:** Added `free(ptr, size)` builtin that calls `munmap` to release mmap'd memory. This pairs with the existing `alloc(size)` builtin. Updated `file_test.teddy` to free its read buffer.
+
+```teddy
+let buf = alloc(4096);    // allocate with mmap
+poke(buf, 42);            // use it
+free(buf, 4096);          // release with munmap
+
+let data = read_file("file.txt\0");
+// ... use data ...
+free(data, 131072);       // free the 128KB read buffer
+```
+
+### Issue #4: No bounds checking - DONE
+
+**Runtime array bounds checking:**
+- Array read (`arr[i]`) and write (`arr[i] = x`) now check `0 <= i < len(arr)` at runtime
+- Out-of-bounds access prints a clear error to stderr and exits with code 1:
+  ```
+  Error: array index out of bounds (index=5, length=3)
+  ```
+- Fast path: just two compares + conditional branch (no overhead on success)
+- Error path: prints index and length values, exits
+
+**Compile-time capacity checks (C compiler internals):**
+- Local variables: max 256 per function
+- Scope depth: max 64 nested scopes
+- String literals: max 256
+- Struct definitions: max 64
+- Enum definitions: max 64
+- All now print clear error messages and exit instead of silently corrupting memory
+
+### Files Changed:
+- `src/codegen.h` - Added `struct_type` to locals table
+- `src/codegen.c` - Struct type tracking, `free()` builtin, `_bounds_check` runtime, `_put_int_stderr` runtime, capacity checks on all fixed-size tables
+
+### New Test Files:
+- `examples/struct_shared_fields.teddy` - Two structs with same field names
+- `examples/struct_field_order.teddy` - Same fields in different order (the killer case)
+- `examples/free_test.teddy` - alloc + free in a loop (proves no leak)
+- `examples/bounds_test.teddy` - Out of bounds read (should error)
+- `examples/bounds_neg_test.teddy` - Negative index (should error)
+
+### Roadmap Updated:
+Expanded the feature roadmap from 5 phases to 11 phases + moonshots. Going wild.
 
 ---
 
