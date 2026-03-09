@@ -40,7 +40,7 @@ Think: Rust's expressiveness + effect tracking + powerful macros, but starting s
 - [x] First-class functions (pass functions as args)
 - [x] Methods on structs (`impl Point { fn distance(...) }`)
 - [x] Higher-order array ops (`map`, `filter`, `reduce`)
-- [ ] Operator overloading
+- [x] Operator overloading
 - [ ] Destructuring (`let (a, b) = pair;`, `let Point { x, y } = p;`)
 - [ ] Default parameter values
 - [ ] Named arguments
@@ -137,6 +137,44 @@ Think: Rust's expressiveness + effect tracking + powerful macros, but starting s
 ---
 
 **Near-term Goal: Self-hosting** - ~~Rewrite the compiler in Teddy itself.~~ **ACHIEVED!**
+
+---
+
+## Session 11 - Operator Overloading (2026-03-09)
+
+### #16 - Operator overloading for structs
+
+Added operator overloading so structs can define custom behavior for `+`, `-`, `*`, `/`, `%`, `==`, `!=`, `<`, `<=`, `>`, `>=`, unary `-`, and `!`.
+
+**Syntax:** Define methods with standard names in `impl` blocks. No new keywords or syntax needed -- the existing method infrastructure handles everything:
+
+```teddy
+struct Vec2 { x, y }
+
+impl Vec2 {
+    fn add(self, other) {
+        return Vec2 { x: self.x + other.x, y: self.y + other.y };
+    }
+    fn neg(self) {
+        return Vec2 { x: 0 - self.x, y: 0 - self.y };
+    }
+}
+
+let c = a + b;       // calls Vec2_add(a, b)
+let d = -a;          // calls Vec2_neg(a)
+let e = a + b - a;   // chaining works!
+```
+
+**Implementation details:**
+- `codegen_binary` checks `infer_struct_type()` on the left operand. If it's a struct and `StructName_opname` exists in the program, emits `bl StructName_opname` instead of inline arithmetic
+- `codegen_unary` does the same for unary operators
+- Extended `infer_struct_type()` to handle `EXPR_BINARY` and `EXPR_UNARY` results, enabling operator chaining (the result of `a + b` is inferred as the same struct type as `a`)
+- Added `Program *prog` reference in `CodeGen` struct for function existence checking at compile time
+- Falls back to integer arithmetic gracefully when no overload is defined
+
+**Operator-to-method mapping:** `add`, `sub`, `mul`, `div`, `mod`, `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `neg`, `not`
+
+**Tests:** `examples/operator_overload.teddy` - 13 assertions covering all arithmetic/comparison operators, unary negation, chaining, and verifying regular int arithmetic is unaffected. All 32 tests pass.
 
 ---
 

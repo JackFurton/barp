@@ -273,11 +273,51 @@ static const char *infer_struct_type(CodeGen *gen, Expr *expr) {
         case EXPR_METHOD_CALL:
             // Method call on a struct - the receiver type is the struct type
             return infer_struct_type(gen, expr->as.method_call.object);
+        case EXPR_BINARY: {
+            // If left operand is a struct type and has an operator overload,
+            // the result type is the same struct type (e.g. Vec2 + Vec2 -> Vec2)
+            const char *left_type = infer_struct_type(gen, expr->as.binary.left);
+            return left_type;  // NULL if not a struct
+        }
+        case EXPR_UNARY: {
+            // Unary op on struct (e.g. -vec) preserves struct type
+            const char *operand_type = infer_struct_type(gen, expr->as.unary.operand);
+            return operand_type;
+        }
         case EXPR_CALL:
             // Function return types aren't tracked yet - return NULL
             return NULL;
         default:
             return NULL;
+    }
+}
+
+// Check if a function with the given name exists in the program
+static int has_function(CodeGen *gen, const char *name) {
+    if (!gen->prog) return 0;
+    for (int i = 0; i < gen->prog->function_count; i++) {
+        if (strcmp(gen->prog->functions[i]->name, name) == 0) return 1;
+    }
+    return 0;
+}
+
+// Map OpType to operator method name for overloading
+static const char *op_method_name(OpType op) {
+    switch (op) {
+        case OP_ADD: return "add";
+        case OP_SUB: return "sub";
+        case OP_MUL: return "mul";
+        case OP_DIV: return "div";
+        case OP_MOD: return "mod";
+        case OP_EQ:  return "eq";
+        case OP_NE:  return "ne";
+        case OP_LT:  return "lt";
+        case OP_LE:  return "le";
+        case OP_GT:  return "gt";
+        case OP_GE:  return "ge";
+        case OP_NEG: return "neg";
+        case OP_NOT: return "not";
+        default:     return NULL;
     }
 }
 
@@ -752,6 +792,38 @@ static void codegen_match(CodeGen *gen, Expr *expr) {
 static void codegen_binary(CodeGen *gen, Expr *expr) {
     BinaryExpr *bin = &expr->as.binary;
     
+    // Check for operator overloading on the left operand
+    const char *stype = infer_struct_type(gen, bin->left);
+    if (stype) {
+        const char *method = op_method_name(bin->op);
+        if (method) {
+            // Build mangled name: StructName_method (e.g. Vec2_add)
+            int slen = strlen(stype);
+            int mlen = strlen(method);
+            char *mangled = malloc(slen + 1 + mlen + 1);
+            memcpy(mangled, stype, slen);
+            mangled[slen] = '_';
+            memcpy(mangled + slen + 1, method, mlen);
+            mangled[slen + 1 + mlen] = '\0';
+            
+            if (has_function(gen, mangled)) {
+                // Operator overload found: call StructName_op(left, right)
+                // Evaluate right first, push to stack
+                codegen_expr(gen, bin->right);
+                emit(gen, "str x0, [sp, #-16]!");  // push right
+                // Evaluate left (self)
+                codegen_expr(gen, bin->left);
+                // x0 = left (self), pop right into x1
+                emit(gen, "ldr x1, [sp], #16");    // x1 = right
+                emit(gen, "bl %s", mangled);
+                free(mangled);
+                return;
+            }
+            free(mangled);
+        }
+    }
+    
+    // Default: integer arithmetic
     // Evaluate left, push result
     codegen_expr(gen, bin->left);
     emit(gen, "str x0, [sp, #-16]!");  // push x0
@@ -825,6 +897,30 @@ static void codegen_binary(CodeGen *gen, Expr *expr) {
 
 static void codegen_unary(CodeGen *gen, Expr *expr) {
     UnaryExpr *un = &expr->as.unary;
+    
+    // Check for operator overloading on the operand
+    const char *stype = infer_struct_type(gen, un->operand);
+    if (stype) {
+        const char *method = op_method_name(un->op);
+        if (method) {
+            int slen = strlen(stype);
+            int mlen = strlen(method);
+            char *mangled = malloc(slen + 1 + mlen + 1);
+            memcpy(mangled, stype, slen);
+            mangled[slen] = '_';
+            memcpy(mangled + slen + 1, method, mlen);
+            mangled[slen + 1 + mlen] = '\0';
+            
+            if (has_function(gen, mangled)) {
+                // Unary operator overload: call StructName_op(self)
+                codegen_expr(gen, un->operand);
+                emit(gen, "bl %s", mangled);
+                free(mangled);
+                return;
+            }
+            free(mangled);
+        }
+    }
     
     codegen_expr(gen, un->operand);
     
@@ -2421,6 +2517,7 @@ static void emit_data_section(CodeGen *gen) {
 
 void codegen_init(CodeGen *gen, FILE *out) {
     gen->out = out;
+    gen->prog = NULL;
     gen->label_count = 0;
     gen->stack_offset = 0;
     gen->local_count = 0;
@@ -2432,6 +2529,8 @@ void codegen_init(CodeGen *gen, FILE *out) {
 }
 
 void codegen_program(CodeGen *gen, Program *prog) {
+    gen->prog = prog;
+    
     // Store struct definitions for field lookup
     for (int i = 0; i < prog->struct_count; i++) {
         if (gen->struct_count >= 64) {

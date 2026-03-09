@@ -11,6 +11,7 @@
 
 typedef struct {
     FILE *out;           // Output file
+    Program *prog;       // Reference to the program AST (for function lookup)
     int label_count;     // For generating unique labels
     int stack_offset;    // Current stack offset for locals
     
