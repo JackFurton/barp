@@ -32,13 +32,14 @@ Think: Rust's expressiveness + effect tracking + powerful macros, but starting s
 - [ ] Type aliases (`type Point = { x: int, y: int }`)
 
 **Phase 3: Language Ergonomics**
-- [ ] `for` loops (`for i in 0..10`, `for x in array`)
-- [ ] `else if` chains (no nesting needed)
-- [ ] `break` / `continue`
+- [x] `for` loops (`for i in 0..10`, `for x in array`)
+- [x] `else if` chains (no nesting needed)
+- [x] `break` / `continue`
 - [ ] String interpolation (`"hello {name}"`)
-- [ ] Closures / anonymous functions (`|x| x + 1`)
-- [ ] First-class functions (pass functions as args)
-- [ ] Methods on structs (`impl Point { fn distance(...) }`)
+- [x] Closures / anonymous functions (`|x| x + 1`)
+- [x] First-class functions (pass functions as args)
+- [x] Methods on structs (`impl Point { fn distance(...) }`)
+- [x] Higher-order array ops (`map`, `filter`, `reduce`)
 - [ ] Operator overloading
 - [ ] Destructuring (`let (a, b) = pair;`, `let Point { x, y } = p;`)
 - [ ] Default parameter values
@@ -136,6 +137,42 @@ Think: Rust's expressiveness + effect tracking + powerful macros, but starting s
 ---
 
 **Near-term Goal: Self-hosting** - ~~Rewrite the compiler in Teddy itself.~~ **ACHIEVED!**
+
+---
+
+## Session 10 - Higher-Order Array Ops (2026-03-09)
+
+### #15 - map, filter, reduce
+
+Added `map`, `filter`, and `reduce` as builtin operations that leverage the closure infrastructure from Session 9.
+
+**Implementation:** Three ARM64 assembly runtime helpers (`_builtin_map`, `_builtin_filter`, `_builtin_reduce`) that accept an array pointer and a closure pointer. Each helper:
+- Uses callee-saved registers (x19-x25) to survive across `blr` calls to the closure
+- Calls closures using the standard `[fn_ptr, env_ptr]` convention (env in x0, user args in x1+)
+- `map` and `filter` heap-allocate result arrays via `_builtin_alloc`
+- `reduce` accumulates a single value
+
+```teddy
+let arr = [1, 2, 3, 4, 5];
+
+let doubled = map(arr, |x| x * 2);       // [2, 4, 6, 8, 10]
+let big = filter(arr, |x| x > 3);         // [4, 5]
+let sum = reduce(arr, 0, |acc, x| acc + x); // 15
+
+// Works with captures
+let factor = 10;
+let scaled = map(arr, |x| x * factor);    // [10, 20, 30, 40, 50]
+
+// Chaining
+let result = reduce(filter(map(arr, |x| x * 2), |x| x > 4), 0, |a, x| a + x); // 24
+```
+
+**API:**
+- `map(arr, f)` → new heap-allocated array with `f(elem)` for each element
+- `filter(arr, f)` → new heap-allocated array with elements where `f(elem)` is truthy
+- `reduce(arr, init, f)` → `f(f(f(init, arr[0]), arr[1]), ...)`
+
+**Tests:** `examples/map_filter_reduce.teddy` - 18 assertions covering basic ops, captures, chaining, and edge cases. All 31 tests pass.
 
 ---
 

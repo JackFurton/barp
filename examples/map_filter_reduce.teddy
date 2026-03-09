@@ -1,0 +1,61 @@
+// Test: higher-order array operations (map, filter, reduce)
+
+fn main() {
+    let arr = [1, 2, 3, 4, 5];
+
+    // map: double each element
+    let doubled = map(arr, |x| x * 2);
+    print len(doubled);   // 5
+    print doubled[0];     // 2
+    print doubled[1];     // 4
+    print doubled[2];     // 6
+    print doubled[3];     // 8
+    print doubled[4];     // 10
+
+    // filter: keep only values > 3
+    let big = filter(arr, |x| x > 3);
+    print len(big);       // 2
+    print big[0];         // 4
+    print big[1];         // 5
+
+    // reduce: sum all elements
+    let total = reduce(arr, 0, |acc, x| acc + x);
+    print total;          // 15
+
+    // reduce: product
+    let product = reduce(arr, 1, |acc, x| acc * x);
+    print product;        // 120
+
+    // map with capture
+    let factor = 10;
+    let scaled = map(arr, |x| x * factor);
+    print scaled[0];      // 10
+    print scaled[4];      // 50
+
+    // filter with capture
+    let threshold = 3;
+    let above = filter(arr, |x| x > threshold);
+    print len(above);     // 2
+
+    // reduce with capture
+    let bonus = 100;
+    let total2 = reduce(arr, bonus, |acc, x| acc + x);
+    print total2;         // 115
+
+    // chaining: sum of doubled values > 4
+    let doubled2 = map(arr, |x| x * 2);
+    let big2 = filter(doubled2, |x| x > 4);
+    let chain_sum = reduce(big2, 0, |acc, x| acc + x);
+    print chain_sum;      // 6+8+10 = 24
+
+    // edge case: filter where nothing passes
+    let none = filter(arr, |x| x > 100);
+    print len(none);      // 0
+
+    // edge case: empty-like reduce
+    let arr1 = [42];
+    let r = reduce(arr1, 0, |acc, x| acc + x);
+    print r;              // 42
+
+    return 0;
+}

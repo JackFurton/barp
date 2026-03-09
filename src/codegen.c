@@ -315,7 +315,9 @@ static void maybe_add_capture(const char *name, char **params, int param_count,
         strcmp(name, "read_file") == 0 || strcmp(name, "write_file") == 0 ||
         strcmp(name, "exit") == 0 || strcmp(name, "str_len") == 0 ||
         strcmp(name, "put_char") == 0 || strcmp(name, "put_str") == 0 ||
-        strcmp(name, "put_int") == 0 || strcmp(name, "print") == 0) return;
+        strcmp(name, "put_int") == 0 || strcmp(name, "print") == 0 ||
+        strcmp(name, "map") == 0 || strcmp(name, "filter") == 0 ||
+        strcmp(name, "reduce") == 0) return;
     
     if (*capture_count >= *capture_cap) {
         *capture_cap = *capture_cap == 0 ? 4 : *capture_cap * 2;
@@ -1002,6 +1004,42 @@ static void codegen_call(CodeGen *gen, Expr *expr) {
     if (strcmp(call->name, "peek") == 0 && call->arg_count == 1) {
         codegen_expr(gen, call->args[0]);  // addr
         emit(gen, "ldr x0, [x0]");         // load value from addr
+        return;
+    }
+    
+    // Builtin: map(arr, f) - apply f to each element, return new heap-allocated array
+    if (strcmp(call->name, "map") == 0 && call->arg_count == 2) {
+        codegen_expr(gen, call->args[0]);  // arr ptr in x0
+        emit(gen, "str x0, [sp, #-16]!");
+        codegen_expr(gen, call->args[1]);  // closure ptr in x0
+        emit(gen, "mov x1, x0");           // x1 = closure ptr
+        emit(gen, "ldr x0, [sp], #16");    // x0 = arr ptr
+        emit(gen, "bl _builtin_map");
+        return;
+    }
+    
+    // Builtin: filter(arr, f) - keep elements where f returns truthy
+    if (strcmp(call->name, "filter") == 0 && call->arg_count == 2) {
+        codegen_expr(gen, call->args[0]);  // arr ptr in x0
+        emit(gen, "str x0, [sp, #-16]!");
+        codegen_expr(gen, call->args[1]);  // closure ptr in x0
+        emit(gen, "mov x1, x0");           // x1 = closure ptr
+        emit(gen, "ldr x0, [sp], #16");    // x0 = arr ptr
+        emit(gen, "bl _builtin_filter");
+        return;
+    }
+    
+    // Builtin: reduce(arr, init, f) - fold array with accumulator
+    if (strcmp(call->name, "reduce") == 0 && call->arg_count == 3) {
+        codegen_expr(gen, call->args[0]);  // arr ptr in x0
+        emit(gen, "str x0, [sp, #-16]!");
+        codegen_expr(gen, call->args[1]);  // init in x0
+        emit(gen, "str x0, [sp, #-16]!");
+        codegen_expr(gen, call->args[2]);  // closure ptr in x0
+        emit(gen, "mov x2, x0");           // x2 = closure ptr
+        emit(gen, "ldr x1, [sp], #16");    // x1 = init
+        emit(gen, "ldr x0, [sp], #16");    // x0 = arr ptr
+        emit(gen, "bl _builtin_reduce");
         return;
     }
     
@@ -2089,6 +2127,160 @@ static void emit_alloc_and_strings(CodeGen *gen) {
     emit(gen, "ret");
 }
 
+static void emit_higher_order_ops(CodeGen *gen) {
+    // _builtin_map: x0 = arr ptr, x1 = closure ptr
+    // Returns: pointer to new heap-allocated array with f applied to each element
+    // Array layout: [length, elem0, elem1, ...]
+    emit_raw(gen, "");
+    emit_raw(gen, "// Builtin: map(arr, closure)");
+    emit_raw(gen, "_builtin_map:");
+    emit(gen, "stp x29, x30, [sp, #-16]!");
+    emit(gen, "mov x29, sp");
+    // Save callee-saved regs we'll use
+    emit(gen, "stp x19, x20, [sp, #-16]!");  // x19=arr, x20=closure
+    emit(gen, "stp x21, x22, [sp, #-16]!");  // x21=len, x22=result
+    emit(gen, "stp x23, x24, [sp, #-16]!");  // x23=index, x24=fn_ptr
+    emit(gen, "str x25, [sp, #-16]!");        // x25=env_ptr
+    emit(gen, "mov x19, x0");               // x19 = arr ptr
+    emit(gen, "mov x20, x1");               // x20 = closure ptr
+    emit(gen, "ldr x21, [x19]");             // x21 = length
+    // Allocate result array: (len+1)*8 bytes
+    emit(gen, "add x0, x21, #1");
+    emit(gen, "lsl x0, x0, #3");             // x0 = (len+1)*8
+    emit(gen, "bl _builtin_alloc");
+    emit(gen, "mov x22, x0");               // x22 = result ptr
+    emit(gen, "str x21, [x22]");             // result[0] = length
+    // Load closure fn_ptr and env_ptr
+    emit(gen, "ldr x24, [x20]");             // x24 = fn_ptr
+    emit(gen, "ldr x25, [x20, #8]");         // x25 = env_ptr
+    // Loop
+    emit(gen, "mov x23, #0");               // x23 = index = 0
+    emit_raw(gen, ".Lmap_loop:");
+    emit(gen, "cmp x23, x21");
+    emit(gen, "b.ge .Lmap_done");
+    // Load arr[index+1] (skip length header)
+    emit(gen, "add x9, x23, #1");
+    emit(gen, "ldr x1, [x19, x9, lsl #3]"); // x1 = arr[index+1]
+    // Call closure: x0=env, x1=elem
+    emit(gen, "mov x0, x25");               // x0 = env_ptr
+    emit(gen, "blr x24");                   // result in x0
+    // Store result[index+1]
+    emit(gen, "add x9, x23, #1");
+    emit(gen, "str x0, [x22, x9, lsl #3]"); // result[index+1] = f(elem)
+    emit(gen, "add x23, x23, #1");
+    emit(gen, "b .Lmap_loop");
+    emit_raw(gen, ".Lmap_done:");
+    emit(gen, "mov x0, x22");               // return result ptr
+    // Restore callee-saved regs
+    emit(gen, "ldr x25, [sp], #16");
+    emit(gen, "ldp x23, x24, [sp], #16");
+    emit(gen, "ldp x21, x22, [sp], #16");
+    emit(gen, "ldp x19, x20, [sp], #16");
+    emit(gen, "ldp x29, x30, [sp], #16");
+    emit(gen, "ret");
+    
+    // _builtin_filter: x0 = arr ptr, x1 = closure ptr
+    // Returns: pointer to new heap-allocated array with elements where f(elem) is truthy
+    emit_raw(gen, "");
+    emit_raw(gen, "// Builtin: filter(arr, closure)");
+    emit_raw(gen, "_builtin_filter:");
+    emit(gen, "stp x29, x30, [sp, #-16]!");
+    emit(gen, "mov x29, sp");
+    emit(gen, "stp x19, x20, [sp, #-16]!");  // x19=arr, x20=closure
+    emit(gen, "stp x21, x22, [sp, #-16]!");  // x21=len, x22=result
+    emit(gen, "stp x23, x24, [sp, #-16]!");  // x23=index, x24=fn_ptr
+    emit(gen, "stp x25, x26, [sp, #-16]!");  // x25=env_ptr, x26=out_count
+    emit(gen, "mov x19, x0");               // x19 = arr ptr
+    emit(gen, "mov x20, x1");               // x20 = closure ptr
+    emit(gen, "ldr x21, [x19]");             // x21 = length
+    // Allocate result array: (len+1)*8 bytes (worst case all pass)
+    emit(gen, "add x0, x21, #1");
+    emit(gen, "lsl x0, x0, #3");
+    emit(gen, "bl _builtin_alloc");
+    emit(gen, "mov x22, x0");               // x22 = result ptr
+    // Load closure fn_ptr and env_ptr
+    emit(gen, "ldr x24, [x20]");             // x24 = fn_ptr
+    emit(gen, "ldr x25, [x20, #8]");         // x25 = env_ptr
+    // Loop
+    emit(gen, "mov x23, #0");               // x23 = index = 0
+    emit(gen, "mov x26, #0");               // x26 = out_count = 0
+    emit_raw(gen, ".Lfilter_loop:");
+    emit(gen, "cmp x23, x21");
+    emit(gen, "b.ge .Lfilter_done");
+    // Load arr[index+1]
+    emit(gen, "add x9, x23, #1");
+    emit(gen, "ldr x1, [x19, x9, lsl #3]"); // x1 = arr[index+1]
+    // Save the element value for potential storage
+    emit(gen, "str x1, [sp, #-16]!");        // push element
+    // Call closure: x0=env, x1=elem
+    emit(gen, "mov x0, x25");               // x0 = env_ptr
+    emit(gen, "blr x24");                   // result in x0
+    // Pop saved element
+    emit(gen, "ldr x9, [sp], #16");          // x9 = saved element
+    // Check if f(elem) is truthy
+    emit(gen, "cbz x0, .Lfilter_skip");
+    // Store in result array
+    emit(gen, "add x10, x26, #1");           // out_count + 1 (skip length header)
+    emit(gen, "str x9, [x22, x10, lsl #3]"); // result[out_count+1] = elem
+    emit(gen, "add x26, x26, #1");           // out_count++
+    emit_raw(gen, ".Lfilter_skip:");
+    emit(gen, "add x23, x23, #1");           // index++
+    emit(gen, "b .Lfilter_loop");
+    emit_raw(gen, ".Lfilter_done:");
+    emit(gen, "str x26, [x22]");             // result[0] = out_count
+    emit(gen, "mov x0, x22");               // return result ptr
+    // Restore callee-saved regs
+    emit(gen, "ldp x25, x26, [sp], #16");
+    emit(gen, "ldp x23, x24, [sp], #16");
+    emit(gen, "ldp x21, x22, [sp], #16");
+    emit(gen, "ldp x19, x20, [sp], #16");
+    emit(gen, "ldp x29, x30, [sp], #16");
+    emit(gen, "ret");
+    
+    // _builtin_reduce: x0 = arr ptr, x1 = init, x2 = closure ptr
+    // Returns: accumulated result
+    emit_raw(gen, "");
+    emit_raw(gen, "// Builtin: reduce(arr, init, closure)");
+    emit_raw(gen, "_builtin_reduce:");
+    emit(gen, "stp x29, x30, [sp, #-16]!");
+    emit(gen, "mov x29, sp");
+    emit(gen, "stp x19, x20, [sp, #-16]!");  // x19=arr, x20=closure
+    emit(gen, "stp x21, x22, [sp, #-16]!");  // x21=len, x22=acc
+    emit(gen, "stp x23, x24, [sp, #-16]!");  // x23=index, x24=fn_ptr
+    emit(gen, "str x25, [sp, #-16]!");        // x25=env_ptr
+    emit(gen, "mov x19, x0");               // x19 = arr ptr
+    emit(gen, "mov x22, x1");               // x22 = acc = init
+    emit(gen, "mov x20, x2");               // x20 = closure ptr
+    emit(gen, "ldr x21, [x19]");             // x21 = length
+    // Load closure fn_ptr and env_ptr
+    emit(gen, "ldr x24, [x20]");             // x24 = fn_ptr
+    emit(gen, "ldr x25, [x20, #8]");         // x25 = env_ptr
+    // Loop
+    emit(gen, "mov x23, #0");               // x23 = index = 0
+    emit_raw(gen, ".Lreduce_loop:");
+    emit(gen, "cmp x23, x21");
+    emit(gen, "b.ge .Lreduce_done");
+    // Load arr[index+1]
+    emit(gen, "add x9, x23, #1");
+    emit(gen, "ldr x2, [x19, x9, lsl #3]"); // x2 = arr[index+1]
+    // Call closure: x0=env, x1=acc, x2=elem
+    emit(gen, "mov x0, x25");               // x0 = env_ptr
+    emit(gen, "mov x1, x22");               // x1 = acc
+    emit(gen, "blr x24");                   // result in x0
+    emit(gen, "mov x22, x0");               // acc = result
+    emit(gen, "add x23, x23, #1");           // index++
+    emit(gen, "b .Lreduce_loop");
+    emit_raw(gen, ".Lreduce_done:");
+    emit(gen, "mov x0, x22");               // return acc
+    // Restore callee-saved regs
+    emit(gen, "ldr x25, [sp], #16");
+    emit(gen, "ldp x23, x24, [sp], #16");
+    emit(gen, "ldp x21, x22, [sp], #16");
+    emit(gen, "ldp x19, x20, [sp], #16");
+    emit(gen, "ldp x29, x30, [sp], #16");
+    emit(gen, "ret");
+}
+
 static void emit_bounds_check(CodeGen *gen) {
     // _bounds_check: x0 = index, x1 = array length
     // If index < 0 or index >= length, print error to stderr and exit(1)
@@ -2289,6 +2481,7 @@ void codegen_program(CodeGen *gen, Program *prog) {
     emit_print_int_raw(gen);
     emit_file_io(gen);
     emit_alloc_and_strings(gen);
+    emit_higher_order_ops(gen);
     emit_bounds_check(gen);
     
     // Functions
