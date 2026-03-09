@@ -230,7 +230,7 @@ Token lexer_next_token(Lexer *lexer) {
             break;
         case '|':
             if (match(lexer, '|')) return make_token(lexer, TOKEN_OR);
-            break;
+            return make_token(lexer, TOKEN_PIPE);
     }
 
     return error_token(lexer, "Unexpected character");
@@ -263,6 +263,7 @@ const char *token_type_name(TokenType type) {
         case TOKEN_GREATER_EQUAL:return "GREATER_EQUAL";
         case TOKEN_AND:          return "AND";
         case TOKEN_OR:           return "OR";
+        case TOKEN_PIPE:         return "PIPE";
         case TOKEN_INT:          return "INT";
         case TOKEN_STRING:       return "STRING";
         case TOKEN_IDENT:        return "IDENT";

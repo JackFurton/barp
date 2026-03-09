@@ -295,6 +295,35 @@ static Expr *primary(Parser *parser) {
         return expr_array_literal(elements, count, line);
     }
 
+    // Closure: |params| expr  or  |params| { block }
+    if (match(parser, TOKEN_PIPE)) {
+        char **params = NULL;
+        int param_count = 0;
+        int capacity = 0;
+        
+        // Parse parameters (can be empty: || expr)
+        if (!check(parser, TOKEN_PIPE)) {
+            do {
+                consume(parser, TOKEN_IDENT, "Expected parameter name in closure.");
+                if (param_count >= capacity) {
+                    capacity = capacity == 0 ? 4 : capacity * 2;
+                    params = realloc(params, sizeof(char*) * capacity);
+                }
+                params[param_count++] = copy_token_string(&parser->previous);
+            } while (match(parser, TOKEN_COMMA));
+        }
+        consume(parser, TOKEN_PIPE, "Expected '|' after closure parameters.");
+        
+        // Body: either a block or a single expression
+        if (check(parser, TOKEN_LBRACE)) {
+            Stmt *body_block = block(parser);
+            return expr_closure(params, param_count, NULL, body_block, line);
+        } else {
+            Expr *body_expr = expression(parser);
+            return expr_closure(params, param_count, body_expr, NULL, line);
+        }
+    }
+
     error_current(parser, "Expected expression.");
     return expr_int_literal(0, line);  // Dummy to continue
 }

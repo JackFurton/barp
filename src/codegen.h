@@ -49,6 +49,18 @@ typedef struct {
     } structs[64];
     int struct_count;
     
+    // Deferred closure functions to emit after current function
+    struct {
+        char *name;            // Generated function name
+        char **params;         // env + user params
+        int param_count;
+        Expr *body_expr;       // One of these is set
+        Stmt *body_block;
+        char **captures;       // Captured variable names (for env layout)
+        int capture_count;
+    } closures[64];
+    int closure_count;
+    
     // Enum definitions for variant value lookup
     struct {
         char *name;

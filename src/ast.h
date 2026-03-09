@@ -29,6 +29,7 @@ typedef enum {
     EXPR_ENUM_VARIANT,    // Color::Red
     EXPR_MATCH,           // match expr { ... }
     EXPR_METHOD_CALL,     // obj.method(args)
+    EXPR_CLOSURE,         // |x, y| expr or |x, y| { stmts }
 } ExprType;
 
 typedef enum {
@@ -127,6 +128,13 @@ typedef struct {
     int arg_count;
 } MethodCallExpr;
 
+typedef struct {
+    char **params;         // Parameter names
+    int param_count;
+    Expr *body_expr;       // Body as expression (for |x| x + 1), or NULL
+    Stmt *body_block;      // Body as block (for |x| { ... }), or NULL
+} ClosureExpr;
+
 struct MatchArm {
     char *enum_name;       // e.g., "Color" (can be NULL if inferred)
     char *variant_name;    // e.g., "Red"
@@ -152,6 +160,7 @@ struct Expr {
         EnumVariantExpr enum_variant;
         MatchExpr match;
         MethodCallExpr method_call;
+        ClosureExpr closure;
     } as;
 };
 
@@ -298,6 +307,7 @@ Expr *expr_enum_variant(char *enum_name, char *variant_name, Expr *payload, int 
 MatchArm *match_arm_new(char *enum_name, char *variant_name, char *binding_name, Expr *body);
 Expr *expr_match(Expr *value, MatchArm **arms, int arm_count, int line);
 Expr *expr_method_call(Expr *object, char *method_name, Expr **args, int arg_count, int line);
+Expr *expr_closure(char **params, int param_count, Expr *body_expr, Stmt *body_block, int line);
 
 // Statements
 Stmt *stmt_expr(Expr *expr, int line);

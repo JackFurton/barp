@@ -1,0 +1,16 @@
+// Test: closures / anonymous functions
+
+fn apply(f, x) {
+    return f(x);
+}
+
+fn main() {
+    // Simple closure - no captures
+    let double = |x| x * 2;
+    print double(5);     // 10
+
+    // Closure passed to function
+    print apply(|x| x + 1, 10);  // 11
+
+    return 0;
+}

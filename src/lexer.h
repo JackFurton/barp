@@ -37,6 +37,7 @@ typedef enum {
     TOKEN_GREATER_EQUAL,// >=
     TOKEN_AND,          // &&
     TOKEN_OR,           // ||
+    TOKEN_PIPE,         // |
 
     // Literals
     TOKEN_INT,          // 123

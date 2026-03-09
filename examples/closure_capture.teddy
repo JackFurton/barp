@@ -1,0 +1,26 @@
+// Test: closures with variable capture
+
+fn apply(f, x) {
+    return f(x);
+}
+
+fn main() {
+    // Capture a local variable
+    let offset = 10;
+    let add_offset = |x| x + offset;
+    print add_offset(5);     // 15
+    print add_offset(20);    // 30
+
+    // Multiple captures
+    let a = 3;
+    let b = 7;
+    let sum_with = |x| x + a + b;
+    print sum_with(0);       // 10
+    print sum_with(100);     // 110
+
+    // Passing capturing closure to a function
+    let multiplier = 5;
+    print apply(|x| x * multiplier, 6);  // 30
+
+    return 0;
+}

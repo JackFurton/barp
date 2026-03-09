@@ -165,6 +165,17 @@ Expr *expr_method_call(Expr *object, char *method_name, Expr **args, int arg_cou
     return e;
 }
 
+Expr *expr_closure(char **params, int param_count, Expr *body_expr, Stmt *body_block, int line) {
+    Expr *e = malloc(sizeof(Expr));
+    e->type = EXPR_CLOSURE;
+    e->line = line;
+    e->as.closure.params = params;
+    e->as.closure.param_count = param_count;
+    e->as.closure.body_expr = body_expr;
+    e->as.closure.body_block = body_block;
+    return e;
+}
+
 // ============ STATEMENT CONSTRUCTORS ============
 
 Stmt *stmt_expr(Expr *expr, int line) {
@@ -432,6 +443,14 @@ void expr_free(Expr *expr) {
             }
             free(expr->as.method_call.args);
             break;
+        case EXPR_CLOSURE:
+            for (int i = 0; i < expr->as.closure.param_count; i++) {
+                free(expr->as.closure.params[i]);
+            }
+            free(expr->as.closure.params);
+            if (expr->as.closure.body_expr) expr_free(expr->as.closure.body_expr);
+            if (expr->as.closure.body_block) stmt_free(expr->as.closure.body_block);
+            break;
     }
     free(expr);
 }
@@ -663,6 +682,19 @@ void ast_print_expr(Expr *expr, int indent) {
             ast_print_expr(expr->as.method_call.object, indent + 2);
             for (int i = 0; i < expr->as.method_call.arg_count; i++) {
                 ast_print_expr(expr->as.method_call.args[i], indent + 1);
+            }
+            break;
+        case EXPR_CLOSURE:
+            printf("Closure(|");
+            for (int i = 0; i < expr->as.closure.param_count; i++) {
+                if (i > 0) printf(", ");
+                printf("%s", expr->as.closure.params[i]);
+            }
+            printf("|)\n");
+            if (expr->as.closure.body_expr) {
+                ast_print_expr(expr->as.closure.body_expr, indent + 1);
+            } else {
+                ast_print_stmt(expr->as.closure.body_block, indent + 1);
             }
             break;
     }

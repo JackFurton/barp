@@ -145,6 +145,17 @@ Closed 7 issues in one session. The language is starting to feel nice to write.
 
 ### Issues Fixed:
 
+**#12 - Closures:** Full closure support with variable capture. `|x| x * 2` syntax for anonymous functions. Closures are represented as `[fn_ptr, env_ptr]` pairs. Environment capture copies values from the enclosing scope into a stack-allocated env struct. Closure bodies are lambda-lifted into top-level functions that receive the env as a hidden first parameter.
+
+```teddy
+let offset = 10;
+let add = |x| x + offset;  // captures 'offset'
+print add(5);               // 15
+
+fn apply(f, x) { return f(x); }
+print apply(|x| x * 2, 21); // 42
+```
+
 **#2 - Struct field scoping:** Added lightweight struct type tracking so two structs can share field names.
 
 **#4 - Bounds checking:** Runtime array bounds checks on every read/write. Compile-time capacity checks on all fixed-size compiler tables.

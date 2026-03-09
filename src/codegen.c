@@ -281,6 +281,176 @@ static const char *infer_struct_type(CodeGen *gen, Expr *expr) {
     }
 }
 
+// ============ CAPTURE ANALYSIS ============
+
+// Collect free variables in an expression that aren't in the given param list
+static void collect_captures_expr(Expr *expr, char **params, int param_count,
+                                   char ***captures, int *capture_count, int *capture_cap);
+static void collect_captures_stmt(Stmt *stmt, char **params, int param_count,
+                                   char ***captures, int *capture_count, int *capture_cap);
+
+static int is_param(const char *name, char **params, int param_count) {
+    for (int i = 0; i < param_count; i++) {
+        if (strcmp(name, params[i]) == 0) return 1;
+    }
+    return 0;
+}
+
+static int is_captured(const char *name, char **captures, int count) {
+    for (int i = 0; i < count; i++) {
+        if (strcmp(name, captures[i]) == 0) return 1;
+    }
+    return 0;
+}
+
+static void maybe_add_capture(const char *name, char **params, int param_count,
+                               char ***captures, int *capture_count, int *capture_cap) {
+    if (is_param(name, params, param_count)) return;
+    if (is_captured(name, *captures, *capture_count)) return;
+    // Skip builtins and known globals
+    if (strcmp(name, "len") == 0 || strcmp(name, "char_at") == 0 ||
+        strcmp(name, "alloc") == 0 || strcmp(name, "free") == 0 ||
+        strcmp(name, "peek") == 0 || strcmp(name, "poke") == 0 ||
+        strcmp(name, "str_copy") == 0 || strcmp(name, "int_to_str") == 0 ||
+        strcmp(name, "read_file") == 0 || strcmp(name, "write_file") == 0 ||
+        strcmp(name, "exit") == 0 || strcmp(name, "str_len") == 0 ||
+        strcmp(name, "put_char") == 0 || strcmp(name, "put_str") == 0 ||
+        strcmp(name, "put_int") == 0 || strcmp(name, "print") == 0) return;
+    
+    if (*capture_count >= *capture_cap) {
+        *capture_cap = *capture_cap == 0 ? 4 : *capture_cap * 2;
+        *captures = realloc(*captures, sizeof(char*) * *capture_cap);
+    }
+    (*captures)[*capture_count] = my_strdup(name);
+    (*capture_count)++;
+}
+
+static void collect_captures_expr(Expr *expr, char **params, int param_count,
+                                   char ***captures, int *capture_count, int *capture_cap) {
+    if (!expr) return;
+    switch (expr->type) {
+        case EXPR_VARIABLE:
+            maybe_add_capture(expr->as.variable.name, params, param_count,
+                             captures, capture_count, capture_cap);
+            break;
+        case EXPR_BINARY:
+            collect_captures_expr(expr->as.binary.left, params, param_count, captures, capture_count, capture_cap);
+            collect_captures_expr(expr->as.binary.right, params, param_count, captures, capture_count, capture_cap);
+            break;
+        case EXPR_UNARY:
+            collect_captures_expr(expr->as.unary.operand, params, param_count, captures, capture_count, capture_cap);
+            break;
+        case EXPR_CALL:
+            // Don't capture the function name itself (it's a global function)
+            for (int i = 0; i < expr->as.call.arg_count; i++) {
+                collect_captures_expr(expr->as.call.args[i], params, param_count, captures, capture_count, capture_cap);
+            }
+            break;
+        case EXPR_INDEX:
+            collect_captures_expr(expr->as.index.array, params, param_count, captures, capture_count, capture_cap);
+            collect_captures_expr(expr->as.index.index, params, param_count, captures, capture_count, capture_cap);
+            break;
+        case EXPR_FIELD_ACCESS:
+            collect_captures_expr(expr->as.field_access.object, params, param_count, captures, capture_count, capture_cap);
+            break;
+        case EXPR_METHOD_CALL:
+            collect_captures_expr(expr->as.method_call.object, params, param_count, captures, capture_count, capture_cap);
+            for (int i = 0; i < expr->as.method_call.arg_count; i++) {
+                collect_captures_expr(expr->as.method_call.args[i], params, param_count, captures, capture_count, capture_cap);
+            }
+            break;
+        case EXPR_STRUCT_LITERAL:
+            for (int i = 0; i < expr->as.struct_literal.field_count; i++) {
+                collect_captures_expr(expr->as.struct_literal.field_values[i], params, param_count, captures, capture_count, capture_cap);
+            }
+            break;
+        case EXPR_ARRAY_LITERAL:
+            for (int i = 0; i < expr->as.array_literal.count; i++) {
+                collect_captures_expr(expr->as.array_literal.elements[i], params, param_count, captures, capture_count, capture_cap);
+            }
+            break;
+        case EXPR_MATCH:
+            collect_captures_expr(expr->as.match.value, params, param_count, captures, capture_count, capture_cap);
+            for (int i = 0; i < expr->as.match.arm_count; i++) {
+                collect_captures_expr(expr->as.match.arms[i]->body, params, param_count, captures, capture_count, capture_cap);
+            }
+            break;
+        case EXPR_ENUM_VARIANT:
+            if (expr->as.enum_variant.payload)
+                collect_captures_expr(expr->as.enum_variant.payload, params, param_count, captures, capture_count, capture_cap);
+            break;
+        case EXPR_CLOSURE:
+            // Nested closure - its own params shadow, but it may capture from our scope
+            // For now, don't recurse into nested closures (they'll do their own capture)
+            break;
+        default:
+            break;
+    }
+}
+
+static void collect_captures_stmt(Stmt *stmt, char **params, int param_count,
+                                   char ***captures, int *capture_count, int *capture_cap) {
+    if (!stmt) return;
+    switch (stmt->type) {
+        case STMT_EXPR:
+            collect_captures_expr(stmt->as.expr.expr, params, param_count, captures, capture_count, capture_cap);
+            break;
+        case STMT_PRINT:
+            collect_captures_expr(stmt->as.print.expr, params, param_count, captures, capture_count, capture_cap);
+            break;
+        case STMT_LET:
+            collect_captures_expr(stmt->as.let.initializer, params, param_count, captures, capture_count, capture_cap);
+            // The new variable is now a local, add to params so it's not captured
+            // We need to extend our param list temporarily... but that's complex.
+            // For simplicity: let-bound vars inside the closure body won't be captured
+            // (they're defined inside, not outside)
+            break;
+        case STMT_ASSIGN:
+            maybe_add_capture(stmt->as.assign.name, params, param_count, captures, capture_count, capture_cap);
+            collect_captures_expr(stmt->as.assign.value, params, param_count, captures, capture_count, capture_cap);
+            break;
+        case STMT_IF:
+            collect_captures_expr(stmt->as.if_stmt.condition, params, param_count, captures, capture_count, capture_cap);
+            collect_captures_stmt(stmt->as.if_stmt.then_branch, params, param_count, captures, capture_count, capture_cap);
+            if (stmt->as.if_stmt.else_branch)
+                collect_captures_stmt(stmt->as.if_stmt.else_branch, params, param_count, captures, capture_count, capture_cap);
+            break;
+        case STMT_WHILE:
+            collect_captures_expr(stmt->as.while_stmt.condition, params, param_count, captures, capture_count, capture_cap);
+            collect_captures_stmt(stmt->as.while_stmt.body, params, param_count, captures, capture_count, capture_cap);
+            break;
+        case STMT_FOR:
+            if (stmt->as.for_stmt.start) {
+                collect_captures_expr(stmt->as.for_stmt.start, params, param_count, captures, capture_count, capture_cap);
+                collect_captures_expr(stmt->as.for_stmt.end, params, param_count, captures, capture_count, capture_cap);
+            } else {
+                collect_captures_expr(stmt->as.for_stmt.iterable, params, param_count, captures, capture_count, capture_cap);
+            }
+            collect_captures_stmt(stmt->as.for_stmt.body, params, param_count, captures, capture_count, capture_cap);
+            break;
+        case STMT_RETURN:
+            if (stmt->as.return_stmt.value)
+                collect_captures_expr(stmt->as.return_stmt.value, params, param_count, captures, capture_count, capture_cap);
+            break;
+        case STMT_BLOCK:
+            for (int i = 0; i < stmt->as.block.count; i++) {
+                collect_captures_stmt(stmt->as.block.statements[i], params, param_count, captures, capture_count, capture_cap);
+            }
+            break;
+        case STMT_INDEX_ASSIGN:
+            collect_captures_expr(stmt->as.index_assign.array, params, param_count, captures, capture_count, capture_cap);
+            collect_captures_expr(stmt->as.index_assign.index, params, param_count, captures, capture_count, capture_cap);
+            collect_captures_expr(stmt->as.index_assign.value, params, param_count, captures, capture_count, capture_cap);
+            break;
+        case STMT_FIELD_ASSIGN:
+            collect_captures_expr(stmt->as.field_assign.object, params, param_count, captures, capture_count, capture_cap);
+            collect_captures_expr(stmt->as.field_assign.value, params, param_count, captures, capture_count, capture_cap);
+            break;
+        default:
+            break;
+    }
+}
+
 // ============ EXPRESSION CODEGEN ============
 
 static void codegen_expr(CodeGen *gen, Expr *expr);
@@ -835,22 +1005,175 @@ static void codegen_call(CodeGen *gen, Expr *expr) {
         return;
     }
     
+    // Check if this is a closure call (name is a local variable)
+    int is_closure_call = 0;
+    int local_offset = 0;
+    for (int i = gen->local_count - 1; i >= 0; i--) {
+        if (strcmp(gen->locals[i].name, call->name) == 0) {
+            local_offset = gen->locals[i].offset;
+            is_closure_call = 1;
+            break;
+        }
+    }
+    
     // AAPCS64: first 8 args in x0-x7
     const char *arg_regs[] = {"x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"};
     
-    // Evaluate args and push to stack (in reverse order)
-    for (int i = call->arg_count - 1; i >= 0; i--) {
-        codegen_expr(gen, call->args[i]);
-        emit(gen, "str x0, [sp, #-16]!");
+    if (is_closure_call) {
+        // Closure call: variable holds pointer to [fn_ptr, env_ptr]
+        // Evaluate user args and push (in reverse order)
+        for (int i = call->arg_count - 1; i >= 0; i--) {
+            codegen_expr(gen, call->args[i]);
+            emit(gen, "str x0, [sp, #-16]!");
+        }
+        
+        // Load closure struct pointer
+        emit_ldr_fp(gen, "x9", local_offset);
+        // x9 = closure ptr -> [fn_ptr, env_ptr]
+        emit(gen, "ldr x10, [x9]");         // x10 = fn_ptr
+        emit(gen, "ldr x11, [x9, #8]");     // x11 = env_ptr
+        
+        // Push env as first arg (before user args)
+        emit(gen, "str x11, [sp, #-16]!");
+        
+        // Pop all args into registers: env first, then user args
+        int total_args = 1 + call->arg_count;
+        for (int i = 0; i < total_args && i < 8; i++) {
+            emit(gen, "ldr %s, [sp], #16", arg_regs[i]);
+        }
+        
+        // Indirect call through fn_ptr
+        emit(gen, "blr x10");
+    } else {
+        // Regular function call
+        // Evaluate args and push to stack (in reverse order)
+        for (int i = call->arg_count - 1; i >= 0; i--) {
+            codegen_expr(gen, call->args[i]);
+            emit(gen, "str x0, [sp, #-16]!");
+        }
+        
+        // Pop into argument registers
+        for (int i = 0; i < call->arg_count && i < 8; i++) {
+            emit(gen, "ldr %s, [sp], #16", arg_regs[i]);
+        }
+        
+        // Call the function
+        emit(gen, "bl %s", call->name);
+    }
+}
+
+static void codegen_closure(CodeGen *gen, Expr *expr) {
+    ClosureExpr *cl = &expr->as.closure;
+    
+    // Analyze captures
+    char **captures = NULL;
+    int capture_count = 0;
+    int capture_cap = 0;
+    
+    if (cl->body_expr) {
+        collect_captures_expr(cl->body_expr, cl->params, cl->param_count,
+                             &captures, &capture_count, &capture_cap);
+    } else {
+        collect_captures_stmt(cl->body_block, cl->params, cl->param_count,
+                             &captures, &capture_count, &capture_cap);
     }
     
-    // Pop into argument registers
-    for (int i = 0; i < call->arg_count && i < 8; i++) {
-        emit(gen, "ldr %s, [sp], #16", arg_regs[i]);
+    // Filter captures to only include actual local variables in scope
+    char **real_captures = NULL;
+    int real_count = 0;
+    for (int i = 0; i < capture_count; i++) {
+        // Check if this name is actually a local variable
+        int found = 0;
+        for (int j = gen->local_count - 1; j >= 0; j--) {
+            if (strcmp(gen->locals[j].name, captures[i]) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        if (found) {
+            real_captures = realloc(real_captures, sizeof(char*) * (real_count + 1));
+            real_captures[real_count++] = captures[i];
+        } else {
+            free(captures[i]);
+        }
+    }
+    free(captures);
+    captures = real_captures;
+    capture_count = real_count;
+    
+    // Generate unique function name for the closure body
+    int closure_id = gen->closure_count;
+    char fn_name[64];
+    snprintf(fn_name, sizeof(fn_name), "__closure_%d", closure_id);
+    
+    // Defer the closure function for later emission
+    // The closure function takes (env, user_params...)
+    gen->closures[closure_id].name = my_strdup(fn_name);
+    
+    // Build param list: __env + user params
+    int total_params = 1 + cl->param_count;
+    char **fn_params = malloc(sizeof(char*) * total_params);
+    fn_params[0] = my_strdup("__env");
+    for (int i = 0; i < cl->param_count; i++) {
+        fn_params[i + 1] = my_strdup(cl->params[i]);
+    }
+    gen->closures[closure_id].params = fn_params;
+    gen->closures[closure_id].param_count = total_params;
+    gen->closures[closure_id].body_expr = cl->body_expr;
+    gen->closures[closure_id].body_block = cl->body_block;
+    gen->closures[closure_id].captures = captures;
+    gen->closures[closure_id].capture_count = capture_count;
+    gen->closure_count++;
+    
+    // Now emit code to create the closure at runtime:
+    // 1. Allocate closure struct on stack: [fn_ptr, env_ptr] = 16 bytes
+    int closure_offset = gen->stack_offset - 16;
+    closure_offset = closure_offset & ~7;
+    gen->stack_offset = closure_offset;
+    
+    // Store function pointer
+    emit(gen, "adrp x0, %s", fn_name);
+    emit(gen, "add x0, x0, :lo12:%s", fn_name);
+    emit_str_fp(gen, "x0", closure_offset);
+    
+    // 2. Allocate and fill environment if there are captures
+    if (capture_count > 0) {
+        // Env is an array of captured values: capture_count * 8 bytes
+        int env_size = capture_count * 8;
+        int env_offset = gen->stack_offset - env_size;
+        env_offset = env_offset & ~7;
+        gen->stack_offset = env_offset;
+        
+        // Copy captured values into env
+        for (int i = 0; i < capture_count; i++) {
+            int src_offset = find_local(gen, captures[i]);
+            emit_ldr_fp(gen, "x0", src_offset);
+            emit_str_fp(gen, "x0", env_offset + i * 8);
+        }
+        
+        // Store env pointer in closure struct
+        // env_offset is negative (below x29)
+        if (-env_offset <= 4095) {
+            emit(gen, "sub x0, x29, #%d", -env_offset);
+        } else {
+            emit(gen, "mov x0, #%d", -env_offset);
+            emit(gen, "sub x0, x29, x0");
+        }
+        emit_str_fp(gen, "x0", closure_offset + 8);
+    } else {
+        // No captures - env is NULL
+        emit(gen, "mov x0, #0");
+        emit_str_fp(gen, "x0", closure_offset + 8);
     }
     
-    // Call the function
-    emit(gen, "bl %s", call->name);
+    // Return pointer to closure struct
+    // closure_offset is negative (below x29)
+    if (-closure_offset <= 4095) {
+        emit(gen, "sub x0, x29, #%d", -closure_offset);
+    } else {
+        emit(gen, "mov x0, #%d", -closure_offset);
+        emit(gen, "sub x0, x29, x0");
+    }
 }
 
 static void codegen_method_call(CodeGen *gen, Expr *expr) {
@@ -914,6 +1237,7 @@ static void codegen_expr(CodeGen *gen, Expr *expr) {
         case EXPR_ENUM_VARIANT:   codegen_enum_variant(gen, expr); break;
         case EXPR_MATCH:          codegen_match(gen, expr); break;
         case EXPR_METHOD_CALL:    codegen_method_call(gen, expr); break;
+        case EXPR_CLOSURE:        codegen_closure(gen, expr); break;
     }
 }
 
@@ -1347,6 +1671,59 @@ static void codegen_function(CodeGen *gen, Function *fn) {
     emit(gen, "mov sp, x29");
     emit(gen, "ldp x29, x30, [sp], #16");
     emit(gen, "ret");
+}
+
+static void emit_closure_functions(CodeGen *gen) {
+    const char *arg_regs[] = {"x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"};
+    
+    // Emit all deferred closure functions
+    // Note: emitting a closure may create more closures (nested), so use index loop
+    for (int c = 0; c < gen->closure_count; c++) {
+        clear_locals(gen);
+        
+        emit_raw(gen, "");
+        emit_raw(gen, "%s:", gen->closures[c].name);
+        
+        // Prologue
+        emit(gen, "stp x29, x30, [sp, #-16]!");
+        emit(gen, "mov x29, sp");
+        emit(gen, "sub sp, sp, #512");
+        
+        // Store params (env + user params) from registers to stack
+        for (int i = 0; i < gen->closures[c].param_count && i < 8; i++) {
+            int offset = add_local(gen, gen->closures[c].params[i]);
+            emit_str_fp(gen, arg_regs[i], offset);
+        }
+        
+        // Unpack captured values from env into local variables
+        // env is __env parameter, captures are at env[0], env[1], ...
+        if (gen->closures[c].capture_count > 0) {
+            int env_offset = find_local(gen, "__env");
+            for (int i = 0; i < gen->closures[c].capture_count; i++) {
+                emit_ldr_fp(gen, "x1", env_offset);  // x1 = env ptr
+                emit(gen, "ldr x0, [x1, #%d]", i * 8);
+                int cap_offset = add_local(gen, gen->closures[c].captures[i]);
+                emit_str_fp(gen, "x0", cap_offset);
+            }
+        }
+        
+        // Generate body
+        if (gen->closures[c].body_block) {
+            codegen_stmt(gen, gen->closures[c].body_block);
+        } else if (gen->closures[c].body_expr) {
+            codegen_expr(gen, gen->closures[c].body_expr);
+            // Expression body returns the value
+            emit(gen, "mov sp, x29");
+            emit(gen, "ldp x29, x30, [sp], #16");
+            emit(gen, "ret");
+        }
+        
+        // Default return (for block bodies without explicit return)
+        emit(gen, "mov x0, #0");
+        emit(gen, "mov sp, x29");
+        emit(gen, "ldp x29, x30, [sp], #16");
+        emit(gen, "ret");
+    }
 }
 
 // ============ PROGRAM CODEGEN ============
@@ -1859,6 +2236,7 @@ void codegen_init(CodeGen *gen, FILE *out) {
     gen->struct_count = 0;
     gen->enum_count = 0;
     gen->loop_depth = 0;
+    gen->closure_count = 0;
 }
 
 void codegen_program(CodeGen *gen, Program *prog) {
@@ -1917,6 +2295,9 @@ void codegen_program(CodeGen *gen, Program *prog) {
     for (int i = 0; i < prog->function_count; i++) {
         codegen_function(gen, prog->functions[i]);
     }
+    
+    // Closure functions (generated during function compilation)
+    emit_closure_functions(gen);
     
     // Entry point
     emit_start(gen);
