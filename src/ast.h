@@ -28,6 +28,7 @@ typedef enum {
     EXPR_FIELD_ACCESS,
     EXPR_ENUM_VARIANT,    // Color::Red
     EXPR_MATCH,           // match expr { ... }
+    EXPR_METHOD_CALL,     // obj.method(args)
 } ExprType;
 
 typedef enum {
@@ -119,6 +120,13 @@ typedef struct {
     int arm_count;
 } MatchExpr;
 
+typedef struct {
+    Expr *object;          // The receiver (e.g., `p` in `p.distance(q)`)
+    char *method_name;     // The method name (e.g., "distance")
+    Expr **args;           // Arguments (not including self)
+    int arg_count;
+} MethodCallExpr;
+
 struct MatchArm {
     char *enum_name;       // e.g., "Color" (can be NULL if inferred)
     char *variant_name;    // e.g., "Red"
@@ -143,6 +151,7 @@ struct Expr {
         FieldAccessExpr field_access;
         EnumVariantExpr enum_variant;
         MatchExpr match;
+        MethodCallExpr method_call;
     } as;
 };
 
@@ -288,6 +297,7 @@ Expr *expr_field_access(Expr *object, char *field_name, int line);
 Expr *expr_enum_variant(char *enum_name, char *variant_name, Expr *payload, int line);
 MatchArm *match_arm_new(char *enum_name, char *variant_name, char *binding_name, Expr *body);
 Expr *expr_match(Expr *value, MatchArm **arms, int arm_count, int line);
+Expr *expr_method_call(Expr *object, char *method_name, Expr **args, int arg_count, int line);
 
 // Statements
 Stmt *stmt_expr(Expr *expr, int line);

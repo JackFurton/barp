@@ -128,6 +128,7 @@ static TokenType identifier_type(Lexer *lexer) {
                 switch (lexer->start[1]) {
                     case 'f': return check_keyword(lexer, 2, 0, "", TOKEN_IF);
                     case 'n': return check_keyword(lexer, 2, 0, "", TOKEN_IN);
+                    case 'm': return check_keyword(lexer, 2, 2, "pl", TOKEN_IMPL);
                 }
             }
             break;
@@ -281,6 +282,7 @@ const char *token_type_name(TokenType type) {
         case TOKEN_CONTINUE:     return "CONTINUE";
         case TOKEN_FOR:          return "FOR";
         case TOKEN_IN:           return "IN";
+        case TOKEN_IMPL:         return "IMPL";
         case TOKEN_DOT_DOT:     return "DOT_DOT";
         case TOKEN_COLON_COLON:  return "COLON_COLON";
         case TOKEN_FAT_ARROW:    return "FAT_ARROW";

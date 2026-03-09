@@ -1,0 +1,55 @@
+// Test: methods on structs (impl blocks)
+
+struct Point {
+    x,
+    y
+}
+
+impl Point {
+    fn sum(self) {
+        return self.x + self.y;
+    }
+
+    fn add(self, other) {
+        return Point { x: self.x + other.x, y: self.y + other.y };
+    }
+
+    fn scale(self, factor) {
+        return Point { x: self.x * factor, y: self.y * factor };
+    }
+}
+
+struct Rect {
+    width,
+    height
+}
+
+impl Rect {
+    fn area(self) {
+        return self.width * self.height;
+    }
+
+    fn perimeter(self) {
+        return 2 * (self.width + self.height);
+    }
+}
+
+fn main() {
+    let p = Point { x: 3, y: 4 };
+    print p.sum();           // 7
+
+    let q = Point { x: 10, y: 20 };
+    let r = p.add(q);
+    print r.x;               // 13
+    print r.y;               // 24
+
+    let s = p.scale(5);
+    print s.x;               // 15
+    print s.y;               // 20
+
+    let rect = Rect { width: 8, height: 5 };
+    print rect.area();       // 40
+    print rect.perimeter();  // 26
+
+    return 0;
+}

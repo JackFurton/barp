@@ -1,0 +1,37 @@
+// Test: method chaining and methods returning structs
+
+struct Vec2 {
+    x,
+    y
+}
+
+impl Vec2 {
+    fn add(self, other) {
+        return Vec2 { x: self.x + other.x, y: self.y + other.y };
+    }
+
+    fn dot(self, other) {
+        return self.x * other.x + self.y * other.y;
+    }
+
+    fn length_sq(self) {
+        return self.x * self.x + self.y * self.y;
+    }
+}
+
+fn main() {
+    let a = Vec2 { x: 1, y: 2 };
+    let b = Vec2 { x: 3, y: 4 };
+
+    // Direct method call
+    print a.dot(b);        // 1*3 + 2*4 = 11
+    print a.length_sq();   // 1 + 4 = 5
+
+    // Method on returned struct
+    let c = a.add(b);
+    print c.x;             // 4
+    print c.y;             // 6
+    print c.length_sq();   // 16 + 36 = 52
+
+    return 0;
+}

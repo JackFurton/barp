@@ -60,6 +60,7 @@ typedef enum {
     TOKEN_CONTINUE,     // continue
     TOKEN_FOR,          // for
     TOKEN_IN,           // in
+    TOKEN_IMPL,         // impl
 
     // Two-character tokens (new)
     TOKEN_COLON_COLON,  // ::

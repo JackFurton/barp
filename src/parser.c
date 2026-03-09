@@ -338,11 +338,33 @@ static Expr *call(Parser *parser) {
             consume(parser, TOKEN_RBRACKET, "Expected ']' after index.");
             expr = expr_index(expr, index, line);
         } else if (match(parser, TOKEN_DOT)) {
-            // Field access: expr.field
+            // Field access or method call: expr.field or expr.method(args)
             int line = parser->previous.line;
             consume(parser, TOKEN_IDENT, "Expected field name after '.'.");
             char *field_name = copy_token_string(&parser->previous);
-            expr = expr_field_access(expr, field_name, line);
+            
+            if (match(parser, TOKEN_LPAREN)) {
+                // Method call: expr.method(args)
+                Expr **args = NULL;
+                int arg_count = 0;
+                int capacity = 0;
+                
+                if (!check(parser, TOKEN_RPAREN)) {
+                    do {
+                        if (arg_count >= capacity) {
+                            capacity = capacity == 0 ? 4 : capacity * 2;
+                            args = realloc(args, sizeof(Expr*) * capacity);
+                        }
+                        args[arg_count++] = expression(parser);
+                    } while (match(parser, TOKEN_COMMA));
+                }
+                consume(parser, TOKEN_RPAREN, "Expected ')' after method arguments.");
+                
+                expr = expr_method_call(expr, field_name, args, arg_count, line);
+            } else {
+                // Plain field access
+                expr = expr_field_access(expr, field_name, line);
+            }
             free(field_name);
         } else {
             break;
@@ -807,6 +829,40 @@ static Function *function(Parser *parser) {
     return function_new(name, params, param_count, body);
 }
 
+// ============ IMPL BLOCK PARSING ============
+
+// Parse impl block: impl StructName { fn method(self, ...) { ... } ... }
+// Methods get name-mangled to StructName_method
+static void impl_block(Parser *parser, Program *prog) {
+    // 'impl' already consumed
+    consume(parser, TOKEN_IDENT, "Expected struct name after 'impl'.");
+    char *struct_name = copy_token_string(&parser->previous);
+    
+    consume(parser, TOKEN_LBRACE, "Expected '{' after impl struct name.");
+    
+    while (!check(parser, TOKEN_RBRACE) && !check(parser, TOKEN_EOF)) {
+        // Each item in impl block must be a function
+        Function *fn = function(parser);
+        
+        // Mangle name: "method" -> "StructName_method"
+        int slen = strlen(struct_name);
+        int mlen = strlen(fn->name);
+        char *mangled = malloc(slen + 1 + mlen + 1);
+        memcpy(mangled, struct_name, slen);
+        mangled[slen] = '_';
+        memcpy(mangled + slen + 1, fn->name, mlen);
+        mangled[slen + 1 + mlen] = '\0';
+        
+        free(fn->name);
+        fn->name = mangled;
+        
+        program_add_function(prog, fn);
+    }
+    
+    consume(parser, TOKEN_RBRACE, "Expected '}' after impl block.");
+    free(struct_name);
+}
+
 // ============ PUBLIC API ============
 
 void parser_init(Parser *parser, Lexer *lexer) {
@@ -826,6 +882,8 @@ Program *parser_parse(Parser *parser) {
         } else if (match(parser, TOKEN_ENUM)) {
             EnumDef *ed = enum_definition(parser);
             program_add_enum(prog, ed);
+        } else if (match(parser, TOKEN_IMPL)) {
+            impl_block(parser, prog);
         } else {
             Function *fn = function(parser);
             program_add_function(prog, fn);

@@ -154,6 +154,17 @@ Expr *expr_match(Expr *value, MatchArm **arms, int arm_count, int line) {
     return e;
 }
 
+Expr *expr_method_call(Expr *object, char *method_name, Expr **args, int arg_count, int line) {
+    Expr *e = malloc(sizeof(Expr));
+    e->type = EXPR_METHOD_CALL;
+    e->line = line;
+    e->as.method_call.object = object;
+    e->as.method_call.method_name = str_dup(method_name);
+    e->as.method_call.args = args;
+    e->as.method_call.arg_count = arg_count;
+    return e;
+}
+
 // ============ STATEMENT CONSTRUCTORS ============
 
 Stmt *stmt_expr(Expr *expr, int line) {
@@ -413,6 +424,14 @@ void expr_free(Expr *expr) {
             }
             free(expr->as.match.arms);
             break;
+        case EXPR_METHOD_CALL:
+            expr_free(expr->as.method_call.object);
+            free(expr->as.method_call.method_name);
+            for (int i = 0; i < expr->as.method_call.arg_count; i++) {
+                expr_free(expr->as.method_call.args[i]);
+            }
+            free(expr->as.method_call.args);
+            break;
     }
     free(expr);
 }
@@ -634,6 +653,16 @@ void ast_print_expr(Expr *expr, int indent) {
                 }
                 printf(" =>\n");
                 ast_print_expr(arm->body, indent + 2);
+            }
+            break;
+        case EXPR_METHOD_CALL:
+            printf("MethodCall(.%s, %d args)\n", 
+                   expr->as.method_call.method_name,
+                   expr->as.method_call.arg_count);
+            print_indent(indent + 1); printf("object:\n");
+            ast_print_expr(expr->as.method_call.object, indent + 2);
+            for (int i = 0; i < expr->as.method_call.arg_count; i++) {
+                ast_print_expr(expr->as.method_call.args[i], indent + 1);
             }
             break;
     }

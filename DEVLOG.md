@@ -139,7 +139,51 @@ Think: Rust's expressiveness + effect tracking + powerful macros, but starting s
 
 ---
 
-## Session 9 - Issues #2, #4, #5 Fixed + Roadmap (2026-03-09)
+## Session 9 - Ergonomics Blitz (2026-03-09)
+
+Closed 7 issues in one session. The language is starting to feel nice to write.
+
+### Issues Fixed:
+
+**#2 - Struct field scoping:** Added lightweight struct type tracking so two structs can share field names.
+
+**#4 - Bounds checking:** Runtime array bounds checks on every read/write. Compile-time capacity checks on all fixed-size compiler tables.
+
+**#5 - Memory leak:** Added `free(ptr, size)` builtin using `munmap`.
+
+**#8 - For loops:** Both range (`for i in 0..10`) and array (`for x in arr`) iteration, with break/continue support. Desugars to while-loop equivalent in codegen.
+
+**#9 - Else if:** Parser change only -- `else if` desugars to nested if/else.
+
+**#10 - Break/continue:** New AST nodes + loop label stack in codegen. Nested loops work correctly (break only exits inner loop).
+
+**#11 - Methods on structs:** `impl` blocks with method definitions. `p.distance(q)` desugars to `Point_distance(p, q)`. Methods can return structs and type tracking flows through.
+
+### How methods work:
+
+```teddy
+struct Point { x, y }
+
+impl Point {
+    fn sum(self) { return self.x + self.y; }
+    fn add(self, other) {
+        return Point { x: self.x + other.x, y: self.y + other.y };
+    }
+}
+
+fn main() {
+    let p = Point { x: 3, y: 4 };
+    print p.sum();       // 7
+    let q = p.add(Point { x: 10, y: 20 });
+    print q.x;           // 13
+}
+```
+
+Under the hood: `impl Point { fn sum(self) { ... } }` creates a function named `Point_sum`. Method call `p.sum()` becomes `Point_sum(p)`. The struct type is inferred from the receiver variable's type tracking.
+
+---
+
+## Session 9 (earlier) - Issues #2, #4, #5 Fixed + Roadmap (2026-03-09)
 
 ### Issue #2: Struct field names must be globally unique - DONE
 

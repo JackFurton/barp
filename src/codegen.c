@@ -270,6 +270,9 @@ static const char *infer_struct_type(CodeGen *gen, Expr *expr) {
             return expr->as.struct_literal.struct_name;
         case EXPR_VARIABLE:
             return find_local_type(gen, expr->as.variable.name);
+        case EXPR_METHOD_CALL:
+            // Method call on a struct - the receiver type is the struct type
+            return infer_struct_type(gen, expr->as.method_call.object);
         case EXPR_CALL:
             // Function return types aren't tracked yet - return NULL
             return NULL;
@@ -850,6 +853,51 @@ static void codegen_call(CodeGen *gen, Expr *expr) {
     emit(gen, "bl %s", call->name);
 }
 
+static void codegen_method_call(CodeGen *gen, Expr *expr) {
+    MethodCallExpr *mc = &expr->as.method_call;
+    
+    // Figure out the struct type of the object
+    const char *stype = infer_struct_type(gen, mc->object);
+    if (!stype) {
+        fprintf(stderr, "[line %d] Error: cannot determine struct type for method call '.%s'\n",
+                expr->line, mc->method_name);
+        exit(1);
+    }
+    
+    // Build mangled function name: StructType_method
+    int slen = strlen(stype);
+    int mlen = strlen(mc->method_name);
+    char *mangled = malloc(slen + 1 + mlen + 1);
+    memcpy(mangled, stype, slen);
+    mangled[slen] = '_';
+    memcpy(mangled + slen + 1, mc->method_name, mlen);
+    mangled[slen + 1 + mlen] = '\0';
+    
+    // Total args = self + explicit args
+    int total_args = 1 + mc->arg_count;
+    
+    // AAPCS64: first 8 args in x0-x7
+    const char *arg_regs[] = {"x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"};
+    
+    // Evaluate all args (self first) and push to stack in reverse order
+    for (int i = mc->arg_count - 1; i >= 0; i--) {
+        codegen_expr(gen, mc->args[i]);
+        emit(gen, "str x0, [sp, #-16]!");
+    }
+    // self (the object) is arg 0
+    codegen_expr(gen, mc->object);
+    emit(gen, "str x0, [sp, #-16]!");
+    
+    // Pop into argument registers
+    for (int i = 0; i < total_args && i < 8; i++) {
+        emit(gen, "ldr %s, [sp], #16", arg_regs[i]);
+    }
+    
+    // Call the mangled function
+    emit(gen, "bl %s", mangled);
+    free(mangled);
+}
+
 static void codegen_expr(CodeGen *gen, Expr *expr) {
     switch (expr->type) {
         case EXPR_INT_LITERAL:    codegen_int_literal(gen, expr); break;
@@ -865,6 +913,7 @@ static void codegen_expr(CodeGen *gen, Expr *expr) {
         case EXPR_FIELD_ACCESS:   codegen_field_access(gen, expr); break;
         case EXPR_ENUM_VARIANT:   codegen_enum_variant(gen, expr); break;
         case EXPR_MATCH:          codegen_match(gen, expr); break;
+        case EXPR_METHOD_CALL:    codegen_method_call(gen, expr); break;
     }
 }
 
@@ -1267,11 +1316,28 @@ static void codegen_function(CodeGen *gen, Function *fn) {
     // Reserve space for locals (512 bytes - enough for large structs)
     emit(gen, "sub sp, sp, #512");
     
+    // Check if this is a method (name contains '_' like StructName_method)
+    // Extract struct name for 'self' parameter type tracking
+    char *method_struct_name = NULL;
+    char *underscore = strchr(fn->name, '_');
+    if (underscore && fn->param_count > 0 && strcmp(fn->params[0], "self") == 0) {
+        int prefix_len = underscore - fn->name;
+        method_struct_name = malloc(prefix_len + 1);
+        memcpy(method_struct_name, fn->name, prefix_len);
+        method_struct_name[prefix_len] = '\0';
+    }
+    
     // Move arguments from registers to stack
     for (int i = 0; i < fn->param_count && i < 8; i++) {
         int offset = add_local(gen, fn->params[i]);
         emit_str_fp(gen, arg_regs[i], offset);
+        
+        // If this is 'self', set its struct type
+        if (method_struct_name && i == 0) {
+            set_local_type(gen, method_struct_name);
+        }
     }
+    free(method_struct_name);
     
     // Generate body
     codegen_stmt(gen, fn->body);
