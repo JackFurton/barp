@@ -158,7 +158,10 @@ typedef enum {
     STMT_BLOCK,
     STMT_IF,
     STMT_WHILE,
+    STMT_FOR,
     STMT_RETURN,
+    STMT_BREAK,
+    STMT_CONTINUE,
 } StmtType;
 
 typedef struct {
@@ -208,6 +211,14 @@ typedef struct {
 } WhileStmt;
 
 typedef struct {
+    char *var_name;    // Loop variable name
+    Expr *start;       // Range start (NULL for array iteration)
+    Expr *end;         // Range end (NULL for array iteration)
+    Expr *iterable;    // Array expression (NULL for range)
+    Stmt *body;
+} ForStmt;
+
+typedef struct {
     Expr *value;  // Can be NULL
 } ReturnStmt;
 
@@ -224,6 +235,7 @@ struct Stmt {
         BlockStmt block;
         IfStmt if_stmt;
         WhileStmt while_stmt;
+        ForStmt for_stmt;
         ReturnStmt return_stmt;
     } as;
 };
@@ -287,7 +299,11 @@ Stmt *stmt_field_assign(Expr *object, char *field_name, Expr *value, int line);
 Stmt *stmt_block(Stmt **statements, int count, int line);
 Stmt *stmt_if(Expr *condition, Stmt *then_branch, Stmt *else_branch, int line);
 Stmt *stmt_while(Expr *condition, Stmt *body, int line);
+Stmt *stmt_for_range(char *var_name, Expr *start, Expr *end, Stmt *body, int line);
+Stmt *stmt_for_array(char *var_name, Expr *iterable, Stmt *body, int line);
 Stmt *stmt_return(Expr *value, int line);
+Stmt *stmt_break(int line);
+Stmt *stmt_continue(int line);
 
 // Structs
 StructDef *struct_def_new(char *name, char **field_names, int field_count);

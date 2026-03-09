@@ -104,6 +104,8 @@ static TokenType check_keyword(Lexer *lexer, int start, int length,
 static TokenType identifier_type(Lexer *lexer) {
     // Simple trie for keywords
     switch (lexer->start[0]) {
+        case 'b': return check_keyword(lexer, 1, 4, "reak", TOKEN_BREAK);
+        case 'c': return check_keyword(lexer, 1, 7, "ontinue", TOKEN_CONTINUE);
         case 'e':
             if (lexer->current - lexer->start > 1) {
                 switch (lexer->start[1]) {
@@ -117,10 +119,18 @@ static TokenType identifier_type(Lexer *lexer) {
                 switch (lexer->start[1]) {
                     case 'n': return check_keyword(lexer, 2, 0, "", TOKEN_FN);
                     case 'a': return check_keyword(lexer, 2, 3, "lse", TOKEN_FALSE);
+                    case 'o': return check_keyword(lexer, 2, 1, "r", TOKEN_FOR);
                 }
             }
             break;
-        case 'i': return check_keyword(lexer, 1, 1, "f", TOKEN_IF);
+        case 'i':
+            if (lexer->current - lexer->start > 1) {
+                switch (lexer->start[1]) {
+                    case 'f': return check_keyword(lexer, 2, 0, "", TOKEN_IF);
+                    case 'n': return check_keyword(lexer, 2, 0, "", TOKEN_IN);
+                }
+            }
+            break;
         case 'l': return check_keyword(lexer, 1, 2, "et", TOKEN_LET);
         case 'm': return check_keyword(lexer, 1, 4, "atch", TOKEN_MATCH);
         case 'p': return check_keyword(lexer, 1, 4, "rint", TOKEN_PRINT);
@@ -191,7 +201,12 @@ Token lexer_next_token(Lexer *lexer) {
         case ']': return make_token(lexer, TOKEN_RBRACKET);
         case ';': return make_token(lexer, TOKEN_SEMICOLON);
         case ',': return make_token(lexer, TOKEN_COMMA);
-        case '.': return make_token(lexer, TOKEN_DOT);
+        case '.':
+            if (peek(lexer) == '.') {
+                advance(lexer);
+                return make_token(lexer, TOKEN_DOT_DOT);
+            }
+            return make_token(lexer, TOKEN_DOT);
         case ':': 
             return make_token(lexer, match(lexer, ':') ? TOKEN_COLON_COLON : TOKEN_COLON);
         case '+': return make_token(lexer, TOKEN_PLUS);
@@ -262,6 +277,11 @@ const char *token_type_name(TokenType type) {
         case TOKEN_PRINT:        return "PRINT";
         case TOKEN_TRUE:         return "TRUE";
         case TOKEN_FALSE:        return "FALSE";
+        case TOKEN_BREAK:        return "BREAK";
+        case TOKEN_CONTINUE:     return "CONTINUE";
+        case TOKEN_FOR:          return "FOR";
+        case TOKEN_IN:           return "IN";
+        case TOKEN_DOT_DOT:     return "DOT_DOT";
         case TOKEN_COLON_COLON:  return "COLON_COLON";
         case TOKEN_FAT_ARROW:    return "FAT_ARROW";
         case TOKEN_EOF:          return "EOF";

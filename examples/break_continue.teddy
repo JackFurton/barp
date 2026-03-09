@@ -1,0 +1,45 @@
+// Test: break and continue
+
+fn main() {
+    // Test break: sum until we hit 5
+    let sum = 0;
+    let i = 0;
+    while i < 100 {
+        if i == 5 {
+            break;
+        }
+        sum = sum + i;
+        i = i + 1;
+    }
+    print sum;    // 0+1+2+3+4 = 10
+
+    // Test continue: sum only odd numbers 1..10
+    let odd_sum = 0;
+    let j = 0;
+    while j < 10 {
+        j = j + 1;
+        if j % 2 == 0 {
+            continue;
+        }
+        odd_sum = odd_sum + j;
+    }
+    print odd_sum;  // 1+3+5+7+9 = 25
+
+    // Test nested loops with break
+    let count = 0;
+    let a = 0;
+    while a < 5 {
+        let b = 0;
+        while b < 5 {
+            if b == 3 {
+                break;  // only breaks inner loop
+            }
+            count = count + 1;
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    print count;  // 5 * 3 = 15
+
+    return 0;
+}

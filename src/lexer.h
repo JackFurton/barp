@@ -56,10 +56,15 @@ typedef enum {
     TOKEN_PRINT,        // print
     TOKEN_TRUE,         // true
     TOKEN_FALSE,        // false
+    TOKEN_BREAK,        // break
+    TOKEN_CONTINUE,     // continue
+    TOKEN_FOR,          // for
+    TOKEN_IN,           // in
 
     // Two-character tokens (new)
     TOKEN_COLON_COLON,  // ::
     TOKEN_FAT_ARROW,    // =>
+    TOKEN_DOT_DOT,      // ..
 
     // Special
     TOKEN_EOF,

@@ -1,0 +1,60 @@
+// Test: for loops
+
+fn main() {
+    // Range for loop
+    let sum = 0;
+    for i in 0..10 {
+        sum = sum + i;
+    }
+    print sum;    // 0+1+2+...+9 = 45
+
+    // Array iteration
+    let arr = [10, 20, 30, 40, 50];
+    let total = 0;
+    for x in arr {
+        total = total + x;
+    }
+    print total;  // 150
+
+    // Nested for loops
+    let count = 0;
+    for i in 0..3 {
+        for j in 0..4 {
+            count = count + 1;
+        }
+    }
+    print count;  // 12
+
+    // For with break
+    let found = 0;
+    for i in 0..100 {
+        if i == 7 {
+            found = i;
+            break;
+        }
+    }
+    print found;  // 7
+
+    // For with continue (sum even numbers only)
+    let even_sum = 0;
+    for i in 0..10 {
+        if i % 2 != 0 {
+            continue;
+        }
+        even_sum = even_sum + i;
+    }
+    print even_sum;  // 0+2+4+6+8 = 20
+
+    // Array for with break
+    let nums = [5, 10, 15, 20, 25];
+    let first_big = 0;
+    for n in nums {
+        if n > 12 {
+            first_big = n;
+            break;
+        }
+    }
+    print first_big;  // 15
+
+    return 0;
+}

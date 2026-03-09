@@ -238,11 +238,49 @@ Stmt *stmt_while(Expr *condition, Stmt *body, int line) {
     return s;
 }
 
+Stmt *stmt_for_range(char *var_name, Expr *start, Expr *end, Stmt *body, int line) {
+    Stmt *s = malloc(sizeof(Stmt));
+    s->type = STMT_FOR;
+    s->line = line;
+    s->as.for_stmt.var_name = str_dup(var_name);
+    s->as.for_stmt.start = start;
+    s->as.for_stmt.end = end;
+    s->as.for_stmt.iterable = NULL;
+    s->as.for_stmt.body = body;
+    return s;
+}
+
+Stmt *stmt_for_array(char *var_name, Expr *iterable, Stmt *body, int line) {
+    Stmt *s = malloc(sizeof(Stmt));
+    s->type = STMT_FOR;
+    s->line = line;
+    s->as.for_stmt.var_name = str_dup(var_name);
+    s->as.for_stmt.start = NULL;
+    s->as.for_stmt.end = NULL;
+    s->as.for_stmt.iterable = iterable;
+    s->as.for_stmt.body = body;
+    return s;
+}
+
 Stmt *stmt_return(Expr *value, int line) {
     Stmt *s = malloc(sizeof(Stmt));
     s->type = STMT_RETURN;
     s->line = line;
     s->as.return_stmt.value = value;
+    return s;
+}
+
+Stmt *stmt_break(int line) {
+    Stmt *s = malloc(sizeof(Stmt));
+    s->type = STMT_BREAK;
+    s->line = line;
+    return s;
+}
+
+Stmt *stmt_continue(int line) {
+    Stmt *s = malloc(sizeof(Stmt));
+    s->type = STMT_CONTINUE;
+    s->line = line;
     return s;
 }
 
@@ -422,8 +460,18 @@ void stmt_free(Stmt *stmt) {
             expr_free(stmt->as.while_stmt.condition);
             stmt_free(stmt->as.while_stmt.body);
             break;
+        case STMT_FOR:
+            free(stmt->as.for_stmt.var_name);
+            if (stmt->as.for_stmt.start) expr_free(stmt->as.for_stmt.start);
+            if (stmt->as.for_stmt.end) expr_free(stmt->as.for_stmt.end);
+            if (stmt->as.for_stmt.iterable) expr_free(stmt->as.for_stmt.iterable);
+            stmt_free(stmt->as.for_stmt.body);
+            break;
         case STMT_RETURN:
             expr_free(stmt->as.return_stmt.value);
+            break;
+        case STMT_BREAK:
+        case STMT_CONTINUE:
             break;
     }
     free(stmt);
@@ -651,11 +699,30 @@ void ast_print_stmt(Stmt *stmt, int indent) {
             print_indent(indent + 1); printf("body:\n");
             ast_print_stmt(stmt->as.while_stmt.body, indent + 2);
             break;
+        case STMT_FOR:
+            printf("For(%s)\n", stmt->as.for_stmt.var_name);
+            if (stmt->as.for_stmt.start) {
+                print_indent(indent + 1); printf("range:\n");
+                ast_print_expr(stmt->as.for_stmt.start, indent + 2);
+                ast_print_expr(stmt->as.for_stmt.end, indent + 2);
+            } else {
+                print_indent(indent + 1); printf("iterable:\n");
+                ast_print_expr(stmt->as.for_stmt.iterable, indent + 2);
+            }
+            print_indent(indent + 1); printf("body:\n");
+            ast_print_stmt(stmt->as.for_stmt.body, indent + 2);
+            break;
         case STMT_RETURN:
             printf("Return\n");
             if (stmt->as.return_stmt.value) {
                 ast_print_expr(stmt->as.return_stmt.value, indent + 1);
             }
+            break;
+        case STMT_BREAK:
+            printf("Break\n");
+            break;
+        case STMT_CONTINUE:
+            printf("Continue\n");
             break;
     }
 }

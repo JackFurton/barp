@@ -26,6 +26,13 @@ typedef struct {
     int scope_stack[64];
     int scope_depth;
     
+    // Loop label stack for break/continue
+    struct {
+        int start_label;   // label at top of loop (continue target)
+        int end_label;     // label after loop (break target)
+    } loop_stack[32];
+    int loop_depth;
+    
     // String literals table
     struct {
         char *value;

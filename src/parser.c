@@ -494,7 +494,13 @@ static Stmt *if_statement(Parser *parser) {
     Stmt *else_branch = NULL;
     
     if (match(parser, TOKEN_ELSE)) {
-        else_branch = block(parser);
+        if (check(parser, TOKEN_IF)) {
+            // else if: parse as nested if statement
+            advance(parser);  // consume 'if'
+            else_branch = if_statement(parser);
+        } else {
+            else_branch = block(parser);
+        }
     }
     
     return stmt_if(condition, then_branch, else_branch, line);
@@ -646,12 +652,51 @@ static Stmt *block(Parser *parser) {
     return stmt_block(statements, count, line);
 }
 
+static Stmt *for_statement(Parser *parser) {
+    int line = parser->previous.line;
+    
+    // for VAR in EXPR { ... }
+    consume(parser, TOKEN_IDENT, "Expected variable name after 'for'.");
+    char *var_name = copy_token_string(&parser->previous);
+    
+    consume(parser, TOKEN_IN, "Expected 'in' after for variable.");
+    
+    // Parse the iterable expression
+    Expr *first = expression(parser);
+    
+    if (match(parser, TOKEN_DOT_DOT)) {
+        // Range: for i in START..END { ... }
+        Expr *end = expression(parser);
+        Stmt *body = block(parser);
+        Stmt *result = stmt_for_range(var_name, first, end, body, line);
+        free(var_name);
+        return result;
+    } else {
+        // Array iteration: for x in arr { ... }
+        Stmt *body = block(parser);
+        Stmt *result = stmt_for_array(var_name, first, body, line);
+        free(var_name);
+        return result;
+    }
+}
+
 static Stmt *statement(Parser *parser) {
     if (match(parser, TOKEN_LET)) return let_statement(parser);
     if (match(parser, TOKEN_PRINT)) return print_statement(parser);
     if (match(parser, TOKEN_IF)) return if_statement(parser);
     if (match(parser, TOKEN_WHILE)) return while_statement(parser);
+    if (match(parser, TOKEN_FOR)) return for_statement(parser);
     if (match(parser, TOKEN_RETURN)) return return_statement(parser);
+    if (match(parser, TOKEN_BREAK)) {
+        int line = parser->previous.line;
+        consume(parser, TOKEN_SEMICOLON, "Expected ';' after break.");
+        return stmt_break(line);
+    }
+    if (match(parser, TOKEN_CONTINUE)) {
+        int line = parser->previous.line;
+        consume(parser, TOKEN_SEMICOLON, "Expected ';' after continue.");
+        return stmt_continue(line);
+    }
     if (check(parser, TOKEN_LBRACE)) return block(parser);
     
     return expression_statement(parser);

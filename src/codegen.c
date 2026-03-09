@@ -1050,6 +1050,15 @@ static void codegen_while(CodeGen *gen, Stmt *stmt) {
     int start_label = new_label(gen);
     int end_label = new_label(gen);
     
+    // Push loop labels for break/continue
+    if (gen->loop_depth >= 32) {
+        fprintf(stderr, "Error: too many nested loops (max 32)\n");
+        exit(1);
+    }
+    gen->loop_stack[gen->loop_depth].start_label = start_label;
+    gen->loop_stack[gen->loop_depth].end_label = end_label;
+    gen->loop_depth++;
+    
     emit_raw(gen, ".L%d:", start_label);
     
     // Evaluate condition
@@ -1062,6 +1071,128 @@ static void codegen_while(CodeGen *gen, Stmt *stmt) {
     emit(gen, "b .L%d", start_label);
     
     emit_raw(gen, ".L%d:", end_label);
+    
+    // Pop loop labels
+    gen->loop_depth--;
+}
+
+static void codegen_for(CodeGen *gen, Stmt *stmt) {
+    ForStmt *for_stmt = &stmt->as.for_stmt;
+    
+    int start_label = new_label(gen);
+    int end_label = new_label(gen);
+    
+    // Push loop labels for break/continue
+    if (gen->loop_depth >= 32) {
+        fprintf(stderr, "Error: too many nested loops (max 32)\n");
+        exit(1);
+    }
+    
+    if (for_stmt->start != NULL) {
+        // Range for: for VAR in START..END { body }
+        // Desugars to:
+        //   let VAR = START;
+        //   let __end = END;
+        //   while VAR < __end { body; VAR = VAR + 1; }
+        
+        // Evaluate start value and store in loop variable
+        codegen_expr(gen, for_stmt->start);
+        int var_offset = add_local(gen, for_stmt->var_name);
+        emit_str_fp(gen, "x0", var_offset);
+        
+        // Evaluate end value and store in hidden local
+        codegen_expr(gen, for_stmt->end);
+        int end_offset = add_local(gen, "__for_end");
+        emit_str_fp(gen, "x0", end_offset);
+        
+        // continue should jump to the increment, not the condition
+        int inc_label = new_label(gen);
+        gen->loop_stack[gen->loop_depth].start_label = inc_label;
+        gen->loop_stack[gen->loop_depth].end_label = end_label;
+        gen->loop_depth++;
+        
+        // Loop start: check VAR < END
+        emit_raw(gen, ".L%d:", start_label);
+        emit_ldr_fp(gen, "x0", var_offset);
+        emit_ldr_fp(gen, "x1", end_offset);
+        emit(gen, "cmp x0, x1");
+        emit(gen, "b.ge .L%d", end_label);
+        
+        // Body
+        codegen_stmt(gen, for_stmt->body);
+        
+        // Increment: VAR = VAR + 1
+        emit_raw(gen, ".L%d:", inc_label);
+        emit_ldr_fp(gen, "x0", var_offset);
+        emit(gen, "add x0, x0, #1");
+        emit_str_fp(gen, "x0", var_offset);
+        emit(gen, "b .L%d", start_label);
+        
+        emit_raw(gen, ".L%d:", end_label);
+    } else {
+        // Array for: for VAR in ARR { body }
+        // Desugars to:
+        //   let __arr = ARR;
+        //   let __idx = 0;
+        //   let __len = len(__arr);
+        //   while __idx < __len { let VAR = __arr[__idx]; body; __idx = __idx + 1; }
+        
+        // Evaluate array and store
+        codegen_expr(gen, for_stmt->iterable);
+        int arr_offset = add_local(gen, "__for_arr");
+        emit_str_fp(gen, "x0", arr_offset);
+        
+        // Store length
+        emit(gen, "ldr x0, [x0]");     // load length from array header
+        int len_offset = add_local(gen, "__for_len");
+        emit_str_fp(gen, "x0", len_offset);
+        
+        // Initialize index to 0
+        emit(gen, "mov x0, #0");
+        int idx_offset = add_local(gen, "__for_idx");
+        emit_str_fp(gen, "x0", idx_offset);
+        
+        // Allocate the loop variable
+        emit(gen, "mov x0, #0");
+        int var_offset = add_local(gen, for_stmt->var_name);
+        emit_str_fp(gen, "x0", var_offset);
+        
+        // continue should jump to the increment
+        int inc_label = new_label(gen);
+        gen->loop_stack[gen->loop_depth].start_label = inc_label;
+        gen->loop_stack[gen->loop_depth].end_label = end_label;
+        gen->loop_depth++;
+        
+        // Loop start: check __idx < __len
+        emit_raw(gen, ".L%d:", start_label);
+        emit_ldr_fp(gen, "x0", idx_offset);
+        emit_ldr_fp(gen, "x1", len_offset);
+        emit(gen, "cmp x0, x1");
+        emit(gen, "b.ge .L%d", end_label);
+        
+        // Load VAR = arr[__idx]
+        emit_ldr_fp(gen, "x1", arr_offset);
+        emit(gen, "add x1, x1, #8");       // skip length field
+        emit_ldr_fp(gen, "x0", idx_offset);
+        emit(gen, "lsl x0, x0, #3");
+        emit(gen, "ldr x0, [x1, x0]");
+        emit_str_fp(gen, "x0", var_offset);
+        
+        // Body
+        codegen_stmt(gen, for_stmt->body);
+        
+        // Increment: __idx = __idx + 1
+        emit_raw(gen, ".L%d:", inc_label);
+        emit_ldr_fp(gen, "x0", idx_offset);
+        emit(gen, "add x0, x0, #1");
+        emit_str_fp(gen, "x0", idx_offset);
+        emit(gen, "b .L%d", start_label);
+        
+        emit_raw(gen, ".L%d:", end_label);
+    }
+    
+    // Pop loop labels
+    gen->loop_depth--;
 }
 
 static void codegen_return(CodeGen *gen, Stmt *stmt) {
@@ -1083,6 +1214,24 @@ static void codegen_expr_stmt(CodeGen *gen, Stmt *stmt) {
     codegen_expr(gen, stmt->as.expr.expr);
 }
 
+static void codegen_break(CodeGen *gen, Stmt *stmt) {
+    if (gen->loop_depth == 0) {
+        fprintf(stderr, "[line %d] Error: 'break' outside of loop\n", stmt->line);
+        exit(1);
+    }
+    int end_label = gen->loop_stack[gen->loop_depth - 1].end_label;
+    emit(gen, "b .L%d", end_label);
+}
+
+static void codegen_continue(CodeGen *gen, Stmt *stmt) {
+    if (gen->loop_depth == 0) {
+        fprintf(stderr, "[line %d] Error: 'continue' outside of loop\n", stmt->line);
+        exit(1);
+    }
+    int start_label = gen->loop_stack[gen->loop_depth - 1].start_label;
+    emit(gen, "b .L%d", start_label);
+}
+
 static void codegen_stmt(CodeGen *gen, Stmt *stmt) {
     switch (stmt->type) {
         case STMT_BLOCK:        codegen_block(gen, stmt); break;
@@ -1093,7 +1242,10 @@ static void codegen_stmt(CodeGen *gen, Stmt *stmt) {
         case STMT_PRINT:        codegen_print(gen, stmt); break;
         case STMT_IF:           codegen_if(gen, stmt); break;
         case STMT_WHILE:        codegen_while(gen, stmt); break;
+        case STMT_FOR:          codegen_for(gen, stmt); break;
         case STMT_RETURN:       codegen_return(gen, stmt); break;
+        case STMT_BREAK:        codegen_break(gen, stmt); break;
+        case STMT_CONTINUE:     codegen_continue(gen, stmt); break;
         case STMT_EXPR:         codegen_expr_stmt(gen, stmt); break;
     }
 }
@@ -1640,6 +1792,7 @@ void codegen_init(CodeGen *gen, FILE *out) {
     gen->string_count = 0;
     gen->struct_count = 0;
     gen->enum_count = 0;
+    gen->loop_depth = 0;
 }
 
 void codegen_program(CodeGen *gen, Program *prog) {
