@@ -1,0 +1,36 @@
+// Test: default parameter values
+
+fn greet(x, y = 10, z = 20) {
+    return x + y + z;
+}
+
+fn add(a, b = 5) {
+    return a + b;
+}
+
+fn all_defaults(a = 1, b = 2, c = 3) {
+    return a + b + c;
+}
+
+fn main() {
+    // All args provided
+    print greet(1, 2, 3);     // 6
+
+    // One default
+    print greet(1, 2);        // 1 + 2 + 20 = 23
+
+    // Two defaults
+    print greet(100);          // 100 + 10 + 20 = 130
+
+    // Simple two-arg function
+    print add(3, 7);           // 10
+    print add(3);              // 3 + 5 = 8
+
+    // All defaults
+    print all_defaults();      // 1 + 2 + 3 = 6
+    print all_defaults(10);    // 10 + 2 + 3 = 15
+    print all_defaults(10, 20); // 10 + 20 + 3 = 33
+    print all_defaults(10, 20, 30); // 60
+
+    return 0;
+}

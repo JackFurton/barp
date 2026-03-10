@@ -988,8 +988,9 @@ static Function *function(Parser *parser) {
 
     consume(parser, TOKEN_LPAREN, "Expected '(' after function name.");
 
-    // Parse parameters
+    // Parse parameters with optional default values
     char **params = NULL;
+    Expr **defaults = NULL;
     int param_count = 0;
     int capacity = 0;
 
@@ -999,8 +1000,16 @@ static Function *function(Parser *parser) {
             if (param_count >= capacity) {
                 capacity = capacity == 0 ? 4 : capacity * 2;
                 params = realloc(params, sizeof(char*) * capacity);
+                defaults = realloc(defaults, sizeof(Expr*) * capacity);
             }
-            params[param_count++] = copy_token_string(&parser->previous);
+            params[param_count] = copy_token_string(&parser->previous);
+            // Check for default value: param = expr
+            if (match(parser, TOKEN_EQUAL)) {
+                defaults[param_count] = expression(parser);
+            } else {
+                defaults[param_count] = NULL;
+            }
+            param_count++;
         } while (match(parser, TOKEN_COMMA));
     }
 
@@ -1008,7 +1017,9 @@ static Function *function(Parser *parser) {
 
     Stmt *body = block(parser);
 
-    return function_new(name, params, param_count, body);
+    Function *fn = function_new(name, params, param_count, body);
+    fn->defaults = defaults;
+    return fn;
 }
 
 // ============ IMPL BLOCK PARSING ============

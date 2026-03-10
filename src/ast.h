@@ -291,6 +291,7 @@ typedef struct {
 typedef struct {
     char *name;
     char **params;
+    Expr **defaults;     // Default value expressions (NULL if no default)
     int param_count;
     Stmt *body;  // Block statement
 } Function;

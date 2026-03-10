@@ -1185,14 +1185,43 @@ static void codegen_call(CodeGen *gen, Expr *expr) {
         emit(gen, "blr x10");
     } else {
         // Regular function call
-        // Evaluate args and push to stack (in reverse order)
+        // Check for default parameters: if fewer args provided than params,
+        // fill in defaults from the function definition
+        int total_args = call->arg_count;
+        Function *target_fn = NULL;
+        if (gen->prog) {
+            for (int i = 0; i < gen->prog->function_count; i++) {
+                if (strcmp(gen->prog->functions[i]->name, call->name) == 0) {
+                    target_fn = gen->prog->functions[i];
+                    break;
+                }
+            }
+        }
+        
+        if (target_fn && target_fn->defaults && call->arg_count < target_fn->param_count) {
+            total_args = target_fn->param_count;
+        }
+        
+        // Evaluate and push args in reverse order
+        // First push default args (from rightmost to arg_count position)
+        if (total_args > call->arg_count) {
+            for (int i = total_args - 1; i >= call->arg_count; i--) {
+                if (target_fn->defaults[i]) {
+                    codegen_expr(gen, target_fn->defaults[i]);
+                } else {
+                    emit(gen, "mov x0, #0");  // no default, use 0
+                }
+                emit(gen, "str x0, [sp, #-16]!");
+            }
+        }
+        // Then push explicitly provided args (in reverse order)
         for (int i = call->arg_count - 1; i >= 0; i--) {
             codegen_expr(gen, call->args[i]);
             emit(gen, "str x0, [sp, #-16]!");
         }
         
         // Pop into argument registers
-        for (int i = 0; i < call->arg_count && i < 8; i++) {
+        for (int i = 0; i < total_args && i < 8; i++) {
             emit(gen, "ldr %s, [sp], #16", arg_regs[i]);
         }
         

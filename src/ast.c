@@ -348,6 +348,7 @@ Function *function_new(char *name, char **params, int param_count, Stmt *body) {
     Function *fn = malloc(sizeof(Function));
     fn->name = str_dup(name);
     fn->params = params;
+    fn->defaults = NULL;
     fn->param_count = param_count;
     fn->body = body;
     return fn;
@@ -575,6 +576,12 @@ void function_free(Function *fn) {
         free(fn->params[i]);
     }
     free(fn->params);
+    if (fn->defaults) {
+        for (int i = 0; i < fn->param_count; i++) {
+            if (fn->defaults[i]) expr_free(fn->defaults[i]);
+        }
+        free(fn->defaults);
+    }
     stmt_free(fn->body);
     free(fn);
 }
