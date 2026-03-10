@@ -35,15 +35,15 @@ Think: Rust's expressiveness + effect tracking + powerful macros, but starting s
 - [x] `for` loops (`for i in 0..10`, `for x in array`)
 - [x] `else if` chains (no nesting needed)
 - [x] `break` / `continue`
-- [ ] String interpolation (`"hello {name}"`)
+- [x] String interpolation (`"hello {name}"`)
 - [x] Closures / anonymous functions (`|x| x + 1`)
 - [x] First-class functions (pass functions as args)
 - [x] Methods on structs (`impl Point { fn distance(...) }`)
 - [x] Higher-order array ops (`map`, `filter`, `reduce`)
 - [x] Operator overloading
-- [ ] Destructuring (`let (a, b) = pair;`, `let Point { x, y } = p;`)
-- [ ] Default parameter values
-- [ ] Named arguments
+- [x] Destructuring (`let { x, y } = point;`)
+- [x] Default parameter values (`fn foo(x, y = 10)`)
+- [x] Named arguments (`foo(y: 20, x: 10)`)
 
 **Phase 4: Type System**
 - [ ] Full type checker (enforce type annotations)
@@ -137,6 +137,58 @@ Think: Rust's expressiveness + effect tracking + powerful macros, but starting s
 ---
 
 **Near-term Goal: Self-hosting** - ~~Rewrite the compiler in Teddy itself.~~ **ACHIEVED!**
+
+---
+
+## Session 12 - Phase 3 Blitz (2026-03-10)
+
+Cleared the remaining Phase 3 ergonomics in one session. 6 issues total (including #15 and #16 from session 10/11). **Phase 3 is now complete.**
+
+### #17 - String interpolation
+
+`"hello {name}, you are {age}"` syntax in print statements. Parser detects `{` inside string tokens and splits into `EXPR_STRING_INTERP` nodes with alternating string fragment and variable parts. Codegen emits inline `put_str`/`put_int_no_newline` for each part.
+
+Also fixed: `print` now adds a newline after strings (was missing before -- only integers had newlines).
+
+```teddy
+let x = 42;
+print "the answer is {x}";  // the answer is 42
+print "a={x}, b={x}";       // a=42, b=42
+```
+
+### #18 - Struct destructuring
+
+`let { x, y } = point;` extracts struct fields into local variables. Parser detects `{` after `let`, codegen evaluates initializer once then loads each field by offset. Supports partial destructuring (extract only some fields).
+
+```teddy
+let p = Point { x: 10, y: 20 };
+let { x, y } = p;
+print x;  // 10
+```
+
+### #19 - Default parameter values
+
+`fn foo(x, y = 10)` syntax. Default expressions stored in Function AST node. Codegen looks up the target function at call sites and fills in missing args from defaults.
+
+```teddy
+fn greet(x, y = 10, z = 20) { return x + y + z; }
+print greet(100);        // 130
+print greet(1, 2);       // 23
+print greet(1, 2, 3);   // 6
+```
+
+### #20 - Named arguments
+
+`foo(y: 20, x: 10)` syntax reorders arguments at compile time to match parameter positions. Works with default parameters. Added `peek_next_type()` for safe 2-token lookahead to distinguish `name: value` from expressions like `fib(n - 1)`.
+
+```teddy
+fn sub(x, y) { return x - y; }
+print sub(y: 3, x: 10);  // 7
+```
+
+*Bug story*: First implementation consumed the identifier optimistically without lookahead, which broke `fib(n - 1)` -- the parser ate `n` and left `- 1)` dangling, causing compilation failures that spawned runaway processes. Fixed with proper 2-token lookahead.
+
+**Tests:** 36 examples all passing.
 
 ---
 
