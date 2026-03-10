@@ -83,6 +83,7 @@ Expr *expr_call(char *name, Expr **args, int arg_count, int line) {
     e->line = line;
     e->as.call.name = str_dup(name);
     e->as.call.args = args;
+    e->as.call.arg_names = NULL;
     e->as.call.arg_count = arg_count;
     return e;
 }
@@ -412,6 +413,12 @@ void expr_free(Expr *expr) {
                 expr_free(expr->as.call.args[i]);
             }
             free(expr->as.call.args);
+            if (expr->as.call.arg_names) {
+                for (int i = 0; i < expr->as.call.arg_count; i++) {
+                    free(expr->as.call.arg_names[i]);
+                }
+                free(expr->as.call.arg_names);
+            }
             break;
         case EXPR_ARRAY_LITERAL:
             for (int i = 0; i < expr->as.array_literal.count; i++) {

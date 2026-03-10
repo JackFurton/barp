@@ -1185,9 +1185,7 @@ static void codegen_call(CodeGen *gen, Expr *expr) {
         emit(gen, "blr x10");
     } else {
         // Regular function call
-        // Check for default parameters: if fewer args provided than params,
-        // fill in defaults from the function definition
-        int total_args = call->arg_count;
+        // Look up target function for default params and named arg resolution
         Function *target_fn = NULL;
         if (gen->prog) {
             for (int i = 0; i < gen->prog->function_count; i++) {
@@ -1198,25 +1196,57 @@ static void codegen_call(CodeGen *gen, Expr *expr) {
             }
         }
         
-        if (target_fn && target_fn->defaults && call->arg_count < target_fn->param_count) {
+        // Handle named arguments: reorder to match parameter order
+        Expr **ordered_args = call->args;
+        int effective_arg_count = call->arg_count;
+        
+        if (call->arg_names && target_fn) {
+            // Create reordered arg array matching param order
+            effective_arg_count = target_fn->param_count;
+            ordered_args = malloc(sizeof(Expr*) * effective_arg_count);
+            // Initialize with NULLs (will fill from defaults or error)
+            for (int i = 0; i < effective_arg_count; i++) {
+                ordered_args[i] = NULL;
+            }
+            // Place each named arg at its correct position
+            for (int i = 0; i < call->arg_count; i++) {
+                if (call->arg_names[i]) {
+                    // Find the parameter index
+                    int found = 0;
+                    for (int j = 0; j < target_fn->param_count; j++) {
+                        if (strcmp(call->arg_names[i], target_fn->params[j]) == 0) {
+                            ordered_args[j] = call->args[i];
+                            found = 1;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        fprintf(stderr, "[line %d] Error: unknown parameter name '%s'\n",
+                                0, call->arg_names[i]);
+                    }
+                } else {
+                    // Positional arg at position i
+                    ordered_args[i] = call->args[i];
+                }
+            }
+        }
+        
+        int total_args = effective_arg_count;
+        // Check for default parameters
+        if (target_fn && target_fn->defaults && effective_arg_count < target_fn->param_count) {
             total_args = target_fn->param_count;
         }
         
         // Evaluate and push args in reverse order
-        // First push default args (from rightmost to arg_count position)
-        if (total_args > call->arg_count) {
-            for (int i = total_args - 1; i >= call->arg_count; i--) {
-                if (target_fn->defaults[i]) {
-                    codegen_expr(gen, target_fn->defaults[i]);
-                } else {
-                    emit(gen, "mov x0, #0");  // no default, use 0
-                }
-                emit(gen, "str x0, [sp, #-16]!");
+        // Push all args (including defaults for unfilled slots)
+        for (int i = total_args - 1; i >= 0; i--) {
+            if (i < effective_arg_count && ordered_args[i]) {
+                codegen_expr(gen, ordered_args[i]);
+            } else if (target_fn && target_fn->defaults && i < target_fn->param_count && target_fn->defaults[i]) {
+                codegen_expr(gen, target_fn->defaults[i]);
+            } else {
+                emit(gen, "mov x0, #0");  // no default, use 0
             }
-        }
-        // Then push explicitly provided args (in reverse order)
-        for (int i = call->arg_count - 1; i >= 0; i--) {
-            codegen_expr(gen, call->args[i]);
             emit(gen, "str x0, [sp, #-16]!");
         }
         
@@ -1227,6 +1257,11 @@ static void codegen_call(CodeGen *gen, Expr *expr) {
         
         // Call the function
         emit(gen, "bl %s", call->name);
+        
+        // Free reordered args if we allocated them
+        if (ordered_args != call->args) {
+            free(ordered_args);
+        }
     }
 }
 

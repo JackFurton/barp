@@ -87,6 +87,16 @@ static void consume(Parser *parser, TokenType type, const char *message) {
     error_current(parser, message);
 }
 
+// Peek at the token after parser->current without consuming
+static TokenType peek_next_type(Parser *parser) {
+    // Save lexer state
+    Lexer saved = *parser->lexer;
+    Token next = lexer_next_token(parser->lexer);
+    // Restore lexer state
+    *parser->lexer = saved;
+    return next.type;
+}
+
 static char *copy_token_string(Token *token) {
     char *str = malloc(token->length + 1);
     memcpy(str, token->start, token->length);
@@ -459,18 +469,35 @@ static Expr *call(Parser *parser) {
             char *name = expr->as.variable.name;
             int line = expr->line;
             
-            // Parse arguments
+            // Parse arguments (possibly named: foo(x: 10, y: 20))
             Expr **args = NULL;
+            char **arg_names = NULL;
             int arg_count = 0;
             int capacity = 0;
+            int has_named = 0;
 
             if (!check(parser, TOKEN_RPAREN)) {
                 do {
                     if (arg_count >= capacity) {
                         capacity = capacity == 0 ? 4 : capacity * 2;
                         args = realloc(args, sizeof(Expr*) * capacity);
+                        arg_names = realloc(arg_names, sizeof(char*) * capacity);
                     }
-                    args[arg_count++] = expression(parser);
+                    // Check for named argument: ident ':' using 2-token lookahead
+                    if (check(parser, TOKEN_IDENT) && peek_next_type(parser) == TOKEN_COLON) {
+                        // Named argument: consume name and colon, then parse value
+                        advance(parser);  // consume ident
+                        char *aname = copy_token_string(&parser->previous);
+                        advance(parser);  // consume colon
+                        arg_names[arg_count] = aname;
+                        args[arg_count] = expression(parser);
+                        has_named = 1;
+                    } else {
+                        // Positional argument
+                        arg_names[arg_count] = NULL;
+                        args[arg_count] = expression(parser);
+                    }
+                    arg_count++;
                 } while (match(parser, TOKEN_COMMA));
             }
 
@@ -481,7 +508,14 @@ static Expr *call(Parser *parser) {
             strcpy(name_copy, name);
             expr_free(expr);
             
-            expr = expr_call(name_copy, args, arg_count, line);
+            Expr *call_expr = expr_call(name_copy, args, arg_count, line);
+            if (has_named) {
+                call_expr->as.call.arg_names = arg_names;
+            } else {
+                // Free unused arg_names
+                if (arg_names) free(arg_names);
+            }
+            expr = call_expr;
         } else if (match(parser, TOKEN_LBRACKET)) {
             // Array indexing: expr[index]
             int line = parser->previous.line;

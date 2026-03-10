@@ -82,6 +82,7 @@ typedef struct {
 typedef struct {
     char *name;
     Expr **args;
+    char **arg_names;    // Named argument labels (NULL entries for positional args)
     int arg_count;
 } CallExpr;
 

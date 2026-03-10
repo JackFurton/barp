@@ -1,0 +1,33 @@
+// Test: named arguments
+
+fn add(a, b, c) {
+    return a + b + c;
+}
+
+fn sub(x, y) {
+    return x - y;
+}
+
+fn with_defaults(a, b = 10, c = 20) {
+    return a + b + c;
+}
+
+fn main() {
+    // Named args in different order
+    print add(a: 1, b: 2, c: 3);     // 6
+    print add(c: 30, a: 10, b: 20);   // 60
+
+    // Named args with defaults
+    print with_defaults(a: 5);             // 5 + 10 + 20 = 35
+    print with_defaults(a: 5, c: 100);     // 5 + 10 + 100 = 115
+    print with_defaults(c: 100, a: 5, b: 50); // 155
+
+    // Reversed order
+    print sub(y: 3, x: 10);           // 7
+
+    // Regular positional calls still work
+    print add(1, 2, 3);               // 6
+    print sub(10, 3);                  // 7
+
+    return 0;
+}
