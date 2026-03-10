@@ -187,6 +187,7 @@ typedef enum {
     STMT_RETURN,
     STMT_BREAK,
     STMT_CONTINUE,
+    STMT_DESTRUCTURE,
 } StmtType;
 
 typedef struct {
@@ -247,6 +248,12 @@ typedef struct {
     Expr *value;  // Can be NULL
 } ReturnStmt;
 
+typedef struct {
+    char **field_names;   // Field names to extract
+    int field_count;
+    Expr *initializer;    // The struct expression to destructure
+} DestructureStmt;
+
 struct Stmt {
     StmtType type;
     int line;
@@ -262,6 +269,7 @@ struct Stmt {
         WhileStmt while_stmt;
         ForStmt for_stmt;
         ReturnStmt return_stmt;
+        DestructureStmt destructure;
     } as;
 };
 
@@ -332,6 +340,7 @@ Stmt *stmt_for_array(char *var_name, Expr *iterable, Stmt *body, int line);
 Stmt *stmt_return(Expr *value, int line);
 Stmt *stmt_break(int line);
 Stmt *stmt_continue(int line);
+Stmt *stmt_destructure(char **field_names, int field_count, Expr *initializer, int line);
 
 // Structs
 StructDef *struct_def_new(char *name, char **field_names, int field_count);

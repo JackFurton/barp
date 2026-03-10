@@ -315,6 +315,16 @@ Stmt *stmt_continue(int line) {
     return s;
 }
 
+Stmt *stmt_destructure(char **field_names, int field_count, Expr *initializer, int line) {
+    Stmt *s = malloc(sizeof(Stmt));
+    s->type = STMT_DESTRUCTURE;
+    s->line = line;
+    s->as.destructure.field_names = field_names;
+    s->as.destructure.field_count = field_count;
+    s->as.destructure.initializer = initializer;
+    return s;
+}
+
 // ============ PROGRAM ============
 
 StructDef *struct_def_new(char *name, char **field_names, int field_count) {
@@ -525,6 +535,13 @@ void stmt_free(Stmt *stmt) {
             break;
         case STMT_BREAK:
         case STMT_CONTINUE:
+            break;
+        case STMT_DESTRUCTURE:
+            for (int i = 0; i < stmt->as.destructure.field_count; i++) {
+                free(stmt->as.destructure.field_names[i]);
+            }
+            free(stmt->as.destructure.field_names);
+            expr_free(stmt->as.destructure.initializer);
             break;
     }
     free(stmt);
@@ -805,6 +822,15 @@ void ast_print_stmt(Stmt *stmt, int indent) {
             break;
         case STMT_CONTINUE:
             printf("Continue\n");
+            break;
+        case STMT_DESTRUCTURE:
+            printf("Destructure { ");
+            for (int i = 0; i < stmt->as.destructure.field_count; i++) {
+                if (i > 0) printf(", ");
+                printf("%s", stmt->as.destructure.field_names[i]);
+            }
+            printf(" }\n");
+            ast_print_expr(stmt->as.destructure.initializer, indent + 1);
             break;
     }
 }

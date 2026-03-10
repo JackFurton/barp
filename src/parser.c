@@ -641,6 +641,37 @@ static Expr *expression(Parser *parser) {
 static Stmt *let_statement(Parser *parser) {
     int line = parser->previous.line;
     
+    // Check for destructuring: let { x, y } = expr;
+    if (check(parser, TOKEN_LBRACE)) {
+        advance(parser);  // consume {
+        
+        char **fields = NULL;
+        int field_count = 0;
+        int field_cap = 0;
+        
+        while (!check(parser, TOKEN_RBRACE) && !check(parser, TOKEN_EOF)) {
+            consume(parser, TOKEN_IDENT, "Expected field name in destructuring pattern.");
+            char *fname = copy_token_string(&parser->previous);
+            
+            if (field_count >= field_cap) {
+                field_cap = field_cap == 0 ? 4 : field_cap * 2;
+                fields = realloc(fields, sizeof(char*) * field_cap);
+            }
+            fields[field_count++] = fname;
+            
+            if (!check(parser, TOKEN_RBRACE)) {
+                consume(parser, TOKEN_COMMA, "Expected ',' or '}' in destructuring pattern.");
+            }
+        }
+        
+        consume(parser, TOKEN_RBRACE, "Expected '}' after destructuring pattern.");
+        consume(parser, TOKEN_EQUAL, "Expected '=' after destructuring pattern.");
+        Expr *initializer = expression(parser);
+        consume(parser, TOKEN_SEMICOLON, "Expected ';' after destructuring statement.");
+        
+        return stmt_destructure(fields, field_count, initializer, line);
+    }
+    
     consume(parser, TOKEN_IDENT, "Expected variable name.");
     char *name = copy_token_string(&parser->previous);
     

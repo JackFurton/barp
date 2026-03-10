@@ -1790,6 +1790,55 @@ static void codegen_continue(CodeGen *gen, Stmt *stmt) {
     emit(gen, "b .L%d", start_label);
 }
 
+static void codegen_destructure(CodeGen *gen, Stmt *stmt) {
+    DestructureStmt *ds = &stmt->as.destructure;
+    
+    // Infer struct type from initializer
+    const char *stype = infer_struct_type(gen, ds->initializer);
+    
+    // Evaluate initializer (struct pointer in x0)
+    codegen_expr(gen, ds->initializer);
+    
+    // Save struct pointer to a temp local
+    int tmp_offset = add_local(gen, "__destructure_tmp");
+    emit_str_fp(gen, "x0", tmp_offset);
+    
+    // For each field, load from struct and create a local variable
+    for (int i = 0; i < ds->field_count; i++) {
+        // Load struct pointer
+        emit_ldr_fp(gen, "x0", tmp_offset);
+        
+        // Find field offset
+        int field_offset = -1;
+        if (stype) {
+            field_offset = find_field_offset(gen, stype, ds->field_names[i]);
+        }
+        if (field_offset < 0) {
+            // Fallback: search all structs
+            for (int s = 0; s < gen->struct_count && field_offset < 0; s++) {
+                for (int j = 0; j < gen->structs[s].field_count; j++) {
+                    if (strcmp(gen->structs[s].field_names[j], ds->field_names[i]) == 0) {
+                        field_offset = j * 8;
+                        break;
+                    }
+                }
+            }
+        }
+        if (field_offset < 0) {
+            fprintf(stderr, "[line %d] Error: unknown field '%s' in destructuring\n",
+                    stmt->line, ds->field_names[i]);
+            field_offset = 0;
+        }
+        
+        // Load field value
+        emit(gen, "ldr x0, [x0, #%d]", field_offset);
+        
+        // Create local variable with the field name
+        int local_offset = add_local(gen, ds->field_names[i]);
+        emit_str_fp(gen, "x0", local_offset);
+    }
+}
+
 static void codegen_stmt(CodeGen *gen, Stmt *stmt) {
     switch (stmt->type) {
         case STMT_BLOCK:        codegen_block(gen, stmt); break;
@@ -1804,6 +1853,7 @@ static void codegen_stmt(CodeGen *gen, Stmt *stmt) {
         case STMT_RETURN:       codegen_return(gen, stmt); break;
         case STMT_BREAK:        codegen_break(gen, stmt); break;
         case STMT_CONTINUE:     codegen_continue(gen, stmt); break;
+        case STMT_DESTRUCTURE:  codegen_destructure(gen, stmt); break;
         case STMT_EXPR:         codegen_expr_stmt(gen, stmt); break;
     }
 }

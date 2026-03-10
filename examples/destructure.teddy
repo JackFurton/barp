@@ -1,0 +1,43 @@
+// Test: struct destructuring
+
+struct Point {
+    x,
+    y
+}
+
+struct Color {
+    r,
+    g,
+    b
+}
+
+fn make_point(a, b) {
+    return Point { x: a, y: b };
+}
+
+fn main() {
+    let p = Point { x: 10, y: 20 };
+
+    // Basic destructuring
+    let { x, y } = p;
+    print x;    // 10
+    print y;    // 20
+
+    // Destructuring from function return
+    let { x, y } = make_point(30, 40);
+    print x;    // 30
+    print y;    // 40
+
+    // Partial destructuring (only some fields)
+    let c = Color { r: 255, g: 128, b: 0 };
+    let { r, b } = c;
+    print r;    // 255
+    print b;    // 0
+
+    // Destructuring from struct literal directly
+    let { x, y } = Point { x: 100, y: 200 };
+    print x;    // 100
+    print y;    // 200
+
+    return 0;
+}
