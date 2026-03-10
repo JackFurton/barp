@@ -30,6 +30,7 @@ typedef enum {
     EXPR_MATCH,           // match expr { ... }
     EXPR_METHOD_CALL,     // obj.method(args)
     EXPR_CLOSURE,         // |x, y| expr or |x, y| { stmts }
+    EXPR_STRING_INTERP,   // "hello {name}, age {age}"
 } ExprType;
 
 typedef enum {
@@ -135,6 +136,11 @@ typedef struct {
     Stmt *body_block;      // Body as block (for |x| { ... }), or NULL
 } ClosureExpr;
 
+typedef struct {
+    Expr **parts;          // Array of parts: EXPR_STRING_LITERAL or expression
+    int part_count;
+} StringInterpExpr;
+
 struct MatchArm {
     char *enum_name;       // e.g., "Color" (can be NULL if inferred)
     char *variant_name;    // e.g., "Red"
@@ -161,6 +167,7 @@ struct Expr {
         MatchExpr match;
         MethodCallExpr method_call;
         ClosureExpr closure;
+        StringInterpExpr string_interp;
     } as;
 };
 
@@ -308,6 +315,7 @@ MatchArm *match_arm_new(char *enum_name, char *variant_name, char *binding_name,
 Expr *expr_match(Expr *value, MatchArm **arms, int arm_count, int line);
 Expr *expr_method_call(Expr *object, char *method_name, Expr **args, int arg_count, int line);
 Expr *expr_closure(char **params, int param_count, Expr *body_expr, Stmt *body_block, int line);
+Expr *expr_string_interp(Expr **parts, int part_count, int line);
 
 // Statements
 Stmt *stmt_expr(Expr *expr, int line);

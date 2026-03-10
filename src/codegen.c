@@ -425,6 +425,11 @@ static void collect_captures_expr(Expr *expr, char **params, int param_count,
             // Nested closure - its own params shadow, but it may capture from our scope
             // For now, don't recurse into nested closures (they'll do their own capture)
             break;
+        case EXPR_STRING_INTERP:
+            for (int i = 0; i < expr->as.string_interp.part_count; i++) {
+                collect_captures_expr(expr->as.string_interp.parts[i], params, param_count, captures, capture_count, capture_cap);
+            }
+            break;
         default:
             break;
     }
@@ -1372,6 +1377,11 @@ static void codegen_expr(CodeGen *gen, Expr *expr) {
         case EXPR_MATCH:          codegen_match(gen, expr); break;
         case EXPR_METHOD_CALL:    codegen_method_call(gen, expr); break;
         case EXPR_CLOSURE:        codegen_closure(gen, expr); break;
+        case EXPR_STRING_INTERP:
+            // String interpolation used as an expression - just return 0 for now
+            // (primary use is in print statements which is handled separately)
+            emit(gen, "mov x0, #0");
+            break;
     }
 }
 
@@ -1512,6 +1522,38 @@ static void codegen_field_assign(CodeGen *gen, Stmt *stmt) {
 static void codegen_print(CodeGen *gen, Stmt *stmt) {
     PrintStmt *print = &stmt->as.print;
     
+    if (print->expr->type == EXPR_STRING_INTERP) {
+        // String interpolation: emit each part inline
+        StringInterpExpr *interp = &print->expr->as.string_interp;
+        for (int i = 0; i < interp->part_count; i++) {
+            Expr *part = interp->parts[i];
+            codegen_expr(gen, part);
+            if (part->type == EXPR_STRING_LITERAL) {
+                int len = part->as.string_literal.length;
+                if (len > 0) {
+                    emit(gen, "mov x1, x0");          // x1 = ptr
+                    emit(gen, "mov x2, #%d", len);    // x2 = length
+                    emit(gen, "mov x0, #1");           // stdout
+                    emit(gen, "mov x8, #64");          // sys_write
+                    emit(gen, "svc #0");
+                }
+            } else {
+                // Integer expression: print as number (no newline)
+                emit(gen, "bl _put_int_no_newline");
+            }
+        }
+        // Print newline
+        emit(gen, "mov x0, #10");
+        emit(gen, "strb w0, [sp, #-16]!");
+        emit(gen, "mov x0, #1");
+        emit(gen, "mov x1, sp");
+        emit(gen, "mov x2, #1");
+        emit(gen, "mov x8, #64");
+        emit(gen, "svc #0");
+        emit(gen, "add sp, sp, #16");
+        return;
+    }
+    
     // Evaluate expression
     codegen_expr(gen, print->expr);
     
@@ -1521,6 +1563,15 @@ static void codegen_print(CodeGen *gen, Stmt *stmt) {
         int len = print->expr->as.string_literal.length;
         emit(gen, "mov x1, #%d", len);
         emit(gen, "bl print_str");
+        // Add newline after string (same as print_int)
+        emit(gen, "mov x0, #10");
+        emit(gen, "strb w0, [sp, #-16]!");
+        emit(gen, "mov x0, #1");
+        emit(gen, "mov x1, sp");
+        emit(gen, "mov x2, #1");
+        emit(gen, "mov x8, #64");
+        emit(gen, "svc #0");
+        emit(gen, "add sp, sp, #16");
     } else {
         // Call print_int (x0 already has the value)
         emit(gen, "bl print_int");

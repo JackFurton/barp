@@ -1,0 +1,30 @@
+// Test: string interpolation
+
+fn main() {
+    let name = 42;
+    let age = 25;
+
+    // Basic interpolation
+    print "value: {name}";
+
+    // Multiple interpolations
+    print "x={name}, y={age}";
+
+    // Interpolation at start
+    print "{name} is the answer";
+
+    // Interpolation at end
+    print "the answer is {name}";
+
+    // Adjacent interpolations
+    print "{name}{age}";
+
+    // No interpolation (regular string)
+    print "hello world";
+
+    // Expression result check
+    let x = 100;
+    print "x is {x}";
+
+    return 0;
+}

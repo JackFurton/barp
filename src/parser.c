@@ -125,6 +125,128 @@ static Expr *primary(Parser *parser) {
         const char *start = parser->previous.start + 1;  // skip opening "
         int length = parser->previous.length - 2;         // skip both quotes
         
+        // Check if string contains interpolation markers {..}
+        int has_interp = 0;
+        for (int i = 0; i < length; i++) {
+            if (start[i] == '\\') { i++; continue; }
+            if (start[i] == '{') { has_interp = 1; break; }
+        }
+        
+        if (has_interp) {
+            // Parse as string interpolation
+            // Split into parts: string fragments and variable/expression references
+            Expr **parts = NULL;
+            int part_count = 0;
+            int part_cap = 0;
+            
+            int seg_start = 0;  // start of current string segment
+            int i = 0;
+            while (i < length) {
+                if (start[i] == '\\' && i + 1 < length) {
+                    i += 2;  // skip escape sequence
+                    continue;
+                }
+                if (start[i] == '{') {
+                    // Emit string fragment before this {
+                    if (i > seg_start) {
+                        // Process escape sequences in fragment
+                        char *frag = malloc(i - seg_start + 1);
+                        int fj = 0;
+                        for (int k = seg_start; k < i; k++) {
+                            if (start[k] == '\\' && k + 1 < i) {
+                                k++;
+                                switch (start[k]) {
+                                    case 'n': frag[fj++] = '\n'; break;
+                                    case 't': frag[fj++] = '\t'; break;
+                                    case 'r': frag[fj++] = '\r'; break;
+                                    case '0': frag[fj++] = '\0'; break;
+                                    case '\\': frag[fj++] = '\\'; break;
+                                    case '"': frag[fj++] = '"'; break;
+                                    case '{': frag[fj++] = '{'; break;
+                                    default: frag[fj++] = start[k]; break;
+                                }
+                            } else {
+                                frag[fj++] = start[k];
+                            }
+                        }
+                        frag[fj] = '\0';
+                        Expr *str_part = expr_string_literal(frag, fj, line);
+                        free(frag);
+                        if (part_count >= part_cap) {
+                            part_cap = part_cap == 0 ? 8 : part_cap * 2;
+                            parts = realloc(parts, sizeof(Expr*) * part_cap);
+                        }
+                        parts[part_count++] = str_part;
+                    }
+                    
+                    // Find matching }
+                    i++;  // skip {
+                    int expr_start = i;
+                    while (i < length && start[i] != '}') i++;
+                    if (i >= length) {
+                        fprintf(stderr, "[line %d] Error: Unterminated { in string interpolation\n", line);
+                        exit(1);
+                    }
+                    
+                    // Extract the expression text (variable name)
+                    int expr_len = i - expr_start;
+                    char *expr_text = malloc(expr_len + 1);
+                    memcpy(expr_text, start + expr_start, expr_len);
+                    expr_text[expr_len] = '\0';
+                    
+                    // Create a variable reference expression
+                    Expr *var_part = expr_variable(expr_text, line);
+                    // expr_text ownership transferred to expr_variable (it calls strdup)
+                    free(expr_text);
+                    
+                    if (part_count >= part_cap) {
+                        part_cap = part_cap == 0 ? 8 : part_cap * 2;
+                        parts = realloc(parts, sizeof(Expr*) * part_cap);
+                    }
+                    parts[part_count++] = var_part;
+                    
+                    i++;  // skip }
+                    seg_start = i;
+                } else {
+                    i++;
+                }
+            }
+            
+            // Emit trailing string fragment
+            if (i > seg_start) {
+                char *frag = malloc(i - seg_start + 1);
+                int fj = 0;
+                for (int k = seg_start; k < i; k++) {
+                    if (start[k] == '\\' && k + 1 < i) {
+                        k++;
+                        switch (start[k]) {
+                            case 'n': frag[fj++] = '\n'; break;
+                            case 't': frag[fj++] = '\t'; break;
+                            case 'r': frag[fj++] = '\r'; break;
+                            case '0': frag[fj++] = '\0'; break;
+                            case '\\': frag[fj++] = '\\'; break;
+                            case '"': frag[fj++] = '"'; break;
+                            case '{': frag[fj++] = '{'; break;
+                            default: frag[fj++] = start[k]; break;
+                        }
+                    } else {
+                        frag[fj++] = start[k];
+                    }
+                }
+                frag[fj] = '\0';
+                Expr *str_part = expr_string_literal(frag, fj, line);
+                free(frag);
+                if (part_count >= part_cap) {
+                    part_cap = part_cap == 0 ? 8 : part_cap * 2;
+                    parts = realloc(parts, sizeof(Expr*) * part_cap);
+                }
+                parts[part_count++] = str_part;
+            }
+            
+            return expr_string_interp(parts, part_count, line);
+        }
+        
+        // Regular string literal (no interpolation)
         // Process escape sequences
         char *value = malloc(length + 1);
         int j = 0;

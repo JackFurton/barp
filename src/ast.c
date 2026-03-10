@@ -176,6 +176,15 @@ Expr *expr_closure(char **params, int param_count, Expr *body_expr, Stmt *body_b
     return e;
 }
 
+Expr *expr_string_interp(Expr **parts, int part_count, int line) {
+    Expr *e = malloc(sizeof(Expr));
+    e->type = EXPR_STRING_INTERP;
+    e->line = line;
+    e->as.string_interp.parts = parts;
+    e->as.string_interp.part_count = part_count;
+    return e;
+}
+
 // ============ STATEMENT CONSTRUCTORS ============
 
 Stmt *stmt_expr(Expr *expr, int line) {
@@ -451,6 +460,12 @@ void expr_free(Expr *expr) {
             if (expr->as.closure.body_expr) expr_free(expr->as.closure.body_expr);
             if (expr->as.closure.body_block) stmt_free(expr->as.closure.body_block);
             break;
+        case EXPR_STRING_INTERP:
+            for (int i = 0; i < expr->as.string_interp.part_count; i++) {
+                expr_free(expr->as.string_interp.parts[i]);
+            }
+            free(expr->as.string_interp.parts);
+            break;
     }
     free(expr);
 }
@@ -695,6 +710,12 @@ void ast_print_expr(Expr *expr, int indent) {
                 ast_print_expr(expr->as.closure.body_expr, indent + 1);
             } else {
                 ast_print_stmt(expr->as.closure.body_block, indent + 1);
+            }
+            break;
+        case EXPR_STRING_INTERP:
+            printf("StringInterp(%d parts)\n", expr->as.string_interp.part_count);
+            for (int i = 0; i < expr->as.string_interp.part_count; i++) {
+                ast_print_expr(expr->as.string_interp.parts[i], indent + 1);
             }
             break;
     }
