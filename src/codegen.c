@@ -1958,6 +1958,10 @@ static void codegen_function(CodeGen *gen, Function *fn) {
         // If this is 'self', set its struct type
         if (method_struct_name && i == 0) {
             set_local_type(gen, method_struct_name);
+        } else if (fn->param_types && fn->param_types[i] &&
+                   find_struct(gen, fn->param_types[i]) >= 0) {
+            // Typed struct parameters should carry their type into field access codegen.
+            set_local_type(gen, fn->param_types[i]);
         }
     }
     free(method_struct_name);

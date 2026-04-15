@@ -204,11 +204,12 @@ Stmt *stmt_print(Expr *expr, int line) {
     return s;
 }
 
-Stmt *stmt_let(char *name, Expr *initializer, int line) {
+Stmt *stmt_let(char *name, char *type_name, Expr *initializer, int line) {
     Stmt *s = malloc(sizeof(Stmt));
     s->type = STMT_LET;
     s->line = line;
     s->as.let.name = str_dup(name);
+    s->as.let.type_name = type_name ? str_dup(type_name) : NULL;
     s->as.let.initializer = initializer;
     return s;
 }
@@ -328,28 +329,36 @@ Stmt *stmt_destructure(char **field_names, int field_count, Expr *initializer, i
 
 // ============ PROGRAM ============
 
-StructDef *struct_def_new(char *name, char **field_names, int field_count) {
+StructDef *struct_def_new(char *name, char **field_names, char **field_types, int field_count) {
     StructDef *sd = malloc(sizeof(StructDef));
     sd->name = str_dup(name);
     sd->field_names = field_names;
+    sd->field_types = field_types;
     sd->field_count = field_count;
     return sd;
 }
 
-EnumDef *enum_def_new(char *name, char **variant_names, int *variant_has_data, int variant_count) {
+EnumDef *enum_def_new(char *name, char **variant_names, int *variant_has_data,
+                      char **variant_payload_types, int variant_count) {
     EnumDef *ed = malloc(sizeof(EnumDef));
     ed->name = str_dup(name);
     ed->variant_names = variant_names;
     ed->variant_has_data = variant_has_data;
+    ed->variant_payload_types = variant_payload_types;
     ed->variant_count = variant_count;
     return ed;
 }
 
-Function *function_new(char *name, char **params, int param_count, Stmt *body) {
+Function *function_new(char *name, char **params, char **param_types, int param_count,
+                       char *return_type, char **effects, int effect_count, Stmt *body) {
     Function *fn = malloc(sizeof(Function));
     fn->name = str_dup(name);
     fn->params = params;
+    fn->param_types = param_types;
     fn->defaults = NULL;
+    fn->return_type = return_type ? str_dup(return_type) : NULL;
+    fn->effects = effects;
+    fn->effect_count = effect_count;
     fn->param_count = param_count;
     fn->body = body;
     return fn;
@@ -500,6 +509,7 @@ void stmt_free(Stmt *stmt) {
             break;
         case STMT_LET:
             free(stmt->as.let.name);
+            free(stmt->as.let.type_name);
             expr_free(stmt->as.let.initializer);
             break;
         case STMT_ASSIGN:
@@ -560,8 +570,10 @@ void struct_def_free(StructDef *sd) {
     free(sd->name);
     for (int i = 0; i < sd->field_count; i++) {
         free(sd->field_names[i]);
+        if (sd->field_types) free(sd->field_types[i]);
     }
     free(sd->field_names);
+    free(sd->field_types);
     free(sd);
 }
 
@@ -570,9 +582,11 @@ void enum_def_free(EnumDef *ed) {
     free(ed->name);
     for (int i = 0; i < ed->variant_count; i++) {
         free(ed->variant_names[i]);
+        if (ed->variant_payload_types) free(ed->variant_payload_types[i]);
     }
     free(ed->variant_names);
     free(ed->variant_has_data);
+    free(ed->variant_payload_types);
     free(ed);
 }
 
@@ -581,14 +595,21 @@ void function_free(Function *fn) {
     free(fn->name);
     for (int i = 0; i < fn->param_count; i++) {
         free(fn->params[i]);
+        if (fn->param_types) free(fn->param_types[i]);
     }
     free(fn->params);
+    free(fn->param_types);
     if (fn->defaults) {
         for (int i = 0; i < fn->param_count; i++) {
             if (fn->defaults[i]) expr_free(fn->defaults[i]);
         }
         free(fn->defaults);
     }
+    free(fn->return_type);
+    for (int i = 0; i < fn->effect_count; i++) {
+        free(fn->effects[i]);
+    }
+    free(fn->effects);
     stmt_free(fn->body);
     free(fn);
 }
@@ -765,7 +786,11 @@ void ast_print_stmt(Stmt *stmt, int indent) {
             ast_print_expr(stmt->as.print.expr, indent + 1);
             break;
         case STMT_LET:
-            printf("Let(%s)\n", stmt->as.let.name);
+            printf("Let(%s", stmt->as.let.name);
+            if (stmt->as.let.type_name) {
+                printf(": %s", stmt->as.let.type_name);
+            }
+            printf(")\n");
             ast_print_expr(stmt->as.let.initializer, indent + 1);
             break;
         case STMT_ASSIGN:
@@ -856,6 +881,9 @@ void ast_print_program(Program *prog) {
         printf("Struct: %s { ", sd->name);
         for (int j = 0; j < sd->field_count; j++) {
             printf("%s", sd->field_names[j]);
+            if (sd->field_types && sd->field_types[j]) {
+                printf(": %s", sd->field_types[j]);
+            }
             if (j < sd->field_count - 1) printf(", ");
         }
         printf(" }\n");
@@ -865,6 +893,15 @@ void ast_print_program(Program *prog) {
         printf("Enum: %s { ", ed->name);
         for (int j = 0; j < ed->variant_count; j++) {
             printf("%s", ed->variant_names[j]);
+            if (ed->variant_has_data[j]) {
+                printf("(");
+                if (ed->variant_payload_types && ed->variant_payload_types[j]) {
+                    printf("%s", ed->variant_payload_types[j]);
+                } else {
+                    printf("payload");
+                }
+                printf(")");
+            }
             if (j < ed->variant_count - 1) printf(", ");
         }
         printf(" }\n");
@@ -874,9 +911,23 @@ void ast_print_program(Program *prog) {
         printf("Function: %s(", fn->name);
         for (int j = 0; j < fn->param_count; j++) {
             printf("%s", fn->params[j]);
+            if (fn->param_types && fn->param_types[j]) {
+                printf(": %s", fn->param_types[j]);
+            }
             if (j < fn->param_count - 1) printf(", ");
         }
-        printf(")\n");
+        printf(")");
+        if (fn->return_type) {
+            printf(" -> %s", fn->return_type);
+        }
+        if (fn->effect_count > 0) {
+            printf(" with ");
+            for (int j = 0; j < fn->effect_count; j++) {
+                if (j > 0) printf(", ");
+                printf("%s", fn->effects[j]);
+            }
+        }
+        printf("\n");
         ast_print_stmt(fn->body, 1);
     }
 }

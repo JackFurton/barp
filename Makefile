@@ -5,8 +5,8 @@ CFLAGS = -Wall -Wextra -std=c99 -g
 SRCDIR = src
 BUILDDIR = build
 
-SOURCES = $(SRCDIR)/main.c $(SRCDIR)/lexer.c $(SRCDIR)/ast.c $(SRCDIR)/parser.c $(SRCDIR)/codegen.c
-OBJECTS = $(BUILDDIR)/main.o $(BUILDDIR)/lexer.o $(BUILDDIR)/ast.o $(BUILDDIR)/parser.o $(BUILDDIR)/codegen.o
+SOURCES = $(SRCDIR)/main.c $(SRCDIR)/lexer.c $(SRCDIR)/ast.c $(SRCDIR)/parser.c $(SRCDIR)/codegen.c $(SRCDIR)/type.c $(SRCDIR)/sema.c
+OBJECTS = $(BUILDDIR)/main.o $(BUILDDIR)/lexer.o $(BUILDDIR)/ast.o $(BUILDDIR)/parser.o $(BUILDDIR)/codegen.o $(BUILDDIR)/type.o $(BUILDDIR)/sema.o
 TARGET = teddy
 
 .PHONY: all clean test tokens run

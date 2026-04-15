@@ -1,0 +1,15 @@
+// Typed struct fields with field access through a typed parameter.
+
+struct Point {
+    x: int,
+    y: int
+}
+
+fn length_sq(p: Point) -> int {
+    return p.x * p.x + p.y * p.y;
+}
+
+fn main() -> int {
+    let p: Point = Point { x: 3, y: 4 };
+    return length_sq(p);
+}

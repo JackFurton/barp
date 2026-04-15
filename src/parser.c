@@ -104,6 +104,16 @@ static char *copy_token_string(Token *token) {
     return str;
 }
 
+static char *parse_type_name(Parser *parser, const char *message) {
+    consume(parser, TOKEN_IDENT, message);
+    return copy_token_string(&parser->previous);
+}
+
+static char *optional_type_annotation(Parser *parser) {
+    if (!match(parser, TOKEN_COLON)) return NULL;
+    return parse_type_name(parser, "Expected type name after ':'.");
+}
+
 // ============ FORWARD DECLARATIONS ============
 
 static Expr *expression(Parser *parser);
@@ -708,13 +718,14 @@ static Stmt *let_statement(Parser *parser) {
     
     consume(parser, TOKEN_IDENT, "Expected variable name.");
     char *name = copy_token_string(&parser->previous);
+    char *type_name = optional_type_annotation(parser);
     
     consume(parser, TOKEN_EQUAL, "Expected '=' after variable name.");
     Expr *initializer = expression(parser);
     
     consume(parser, TOKEN_SEMICOLON, "Expected ';' after variable declaration.");
     
-    return stmt_let(name, initializer, line);
+    return stmt_let(name, type_name, initializer, line);
 }
 
 static Stmt *print_statement(Parser *parser) {
@@ -951,6 +962,7 @@ static EnumDef *enum_definition(Parser *parser) {
     
     char **variant_names = NULL;
     int *variant_has_data = NULL;
+    char **variant_payload_types = NULL;
     int variant_count = 0;
     int capacity = 0;
     
@@ -960,13 +972,16 @@ static EnumDef *enum_definition(Parser *parser) {
             capacity = capacity == 0 ? 4 : capacity * 2;
             variant_names = realloc(variant_names, sizeof(char*) * capacity);
             variant_has_data = realloc(variant_has_data, sizeof(int) * capacity);
+            variant_payload_types = realloc(variant_payload_types, sizeof(char*) * capacity);
         }
         variant_names[variant_count] = copy_token_string(&parser->previous);
+        variant_payload_types[variant_count] = NULL;
         
         // Check for variant with data: Some(value)
         if (match(parser, TOKEN_LPAREN)) {
-            // For now, just skip the parameter name - we only support single-value variants
+            // Single-value variants support an optional payload type: Some(value: int)
             consume(parser, TOKEN_IDENT, "Expected parameter name in variant.");
+            variant_payload_types[variant_count] = optional_type_annotation(parser);
             consume(parser, TOKEN_RPAREN, "Expected ')' after variant parameter.");
             variant_has_data[variant_count] = 1;
         } else {
@@ -980,7 +995,7 @@ static EnumDef *enum_definition(Parser *parser) {
     
     consume(parser, TOKEN_RBRACE, "Expected '}' after enum variants.");
     
-    return enum_def_new(name, variant_names, variant_has_data, variant_count);
+    return enum_def_new(name, variant_names, variant_has_data, variant_payload_types, variant_count);
 }
 
 // ============ STRUCT PARSING ============
@@ -993,6 +1008,7 @@ static StructDef *struct_definition(Parser *parser) {
     consume(parser, TOKEN_LBRACE, "Expected '{' after struct name.");
     
     char **field_names = NULL;
+    char **field_types = NULL;
     int field_count = 0;
     int capacity = 0;
     
@@ -1001,8 +1017,11 @@ static StructDef *struct_definition(Parser *parser) {
         if (field_count >= capacity) {
             capacity = capacity == 0 ? 4 : capacity * 2;
             field_names = realloc(field_names, sizeof(char*) * capacity);
+            field_types = realloc(field_types, sizeof(char*) * capacity);
         }
-        field_names[field_count++] = copy_token_string(&parser->previous);
+        field_names[field_count] = copy_token_string(&parser->previous);
+        field_types[field_count] = optional_type_annotation(parser);
+        field_count++;
         
         // Optional comma between fields
         match(parser, TOKEN_COMMA);
@@ -1010,7 +1029,7 @@ static StructDef *struct_definition(Parser *parser) {
     
     consume(parser, TOKEN_RBRACE, "Expected '}' after struct fields.");
     
-    return struct_def_new(name, field_names, field_count);
+    return struct_def_new(name, field_names, field_types, field_count);
 }
 
 // ============ FUNCTION PARSING ============
@@ -1024,6 +1043,7 @@ static Function *function(Parser *parser) {
 
     // Parse parameters with optional default values
     char **params = NULL;
+    char **param_types = NULL;
     Expr **defaults = NULL;
     int param_count = 0;
     int capacity = 0;
@@ -1034,9 +1054,11 @@ static Function *function(Parser *parser) {
             if (param_count >= capacity) {
                 capacity = capacity == 0 ? 4 : capacity * 2;
                 params = realloc(params, sizeof(char*) * capacity);
+                param_types = realloc(param_types, sizeof(char*) * capacity);
                 defaults = realloc(defaults, sizeof(Expr*) * capacity);
             }
             params[param_count] = copy_token_string(&parser->previous);
+            param_types[param_count] = optional_type_annotation(parser);
             // Check for default value: param = expr
             if (match(parser, TOKEN_EQUAL)) {
                 defaults[param_count] = expression(parser);
@@ -1049,9 +1071,29 @@ static Function *function(Parser *parser) {
 
     consume(parser, TOKEN_RPAREN, "Expected ')' after parameters.");
 
+    char *return_type = NULL;
+    if (match(parser, TOKEN_ARROW)) {
+        return_type = parse_type_name(parser, "Expected return type after '->'.");
+    }
+
+    char **effects = NULL;
+    int effect_count = 0;
+    int effect_capacity = 0;
+    if (match(parser, TOKEN_WITH)) {
+        do {
+            if (effect_count >= effect_capacity) {
+                effect_capacity = effect_capacity == 0 ? 4 : effect_capacity * 2;
+                effects = realloc(effects, sizeof(char*) * effect_capacity);
+            }
+            effects[effect_count++] =
+                parse_type_name(parser, "Expected effect name after 'with'.");
+        } while (match(parser, TOKEN_COMMA));
+    }
+
     Stmt *body = block(parser);
 
-    Function *fn = function_new(name, params, param_count, body);
+    Function *fn = function_new(name, params, param_types, param_count,
+                                return_type, effects, effect_count, body);
     fn->defaults = defaults;
     return fn;
 }

@@ -138,7 +138,14 @@ static TokenType identifier_type(Lexer *lexer) {
         case 'r': return check_keyword(lexer, 1, 5, "eturn", TOKEN_RETURN);
         case 's': return check_keyword(lexer, 1, 5, "truct", TOKEN_STRUCT);
         case 't': return check_keyword(lexer, 1, 3, "rue", TOKEN_TRUE);
-        case 'w': return check_keyword(lexer, 1, 4, "hile", TOKEN_WHILE);
+        case 'w':
+            if (lexer->current - lexer->start > 1) {
+                switch (lexer->start[1]) {
+                    case 'h': return check_keyword(lexer, 2, 3, "ile", TOKEN_WHILE);
+                    case 'i': return check_keyword(lexer, 2, 2, "th", TOKEN_WITH);
+                }
+            }
+            break;
     }
     return TOKEN_IDENT;
 }
@@ -211,7 +218,8 @@ Token lexer_next_token(Lexer *lexer) {
         case ':': 
             return make_token(lexer, match(lexer, ':') ? TOKEN_COLON_COLON : TOKEN_COLON);
         case '+': return make_token(lexer, TOKEN_PLUS);
-        case '-': return make_token(lexer, TOKEN_MINUS);
+        case '-':
+            return make_token(lexer, match(lexer, '>') ? TOKEN_ARROW : TOKEN_MINUS);
         case '*': return make_token(lexer, TOKEN_STAR);
         case '/': return make_token(lexer, TOKEN_SLASH);
         case '%': return make_token(lexer, TOKEN_PERCENT);
@@ -284,9 +292,11 @@ const char *token_type_name(TokenType type) {
         case TOKEN_FOR:          return "FOR";
         case TOKEN_IN:           return "IN";
         case TOKEN_IMPL:         return "IMPL";
+        case TOKEN_WITH:         return "WITH";
         case TOKEN_DOT_DOT:     return "DOT_DOT";
         case TOKEN_COLON_COLON:  return "COLON_COLON";
         case TOKEN_FAT_ARROW:    return "FAT_ARROW";
+        case TOKEN_ARROW:        return "ARROW";
         case TOKEN_EOF:          return "EOF";
         case TOKEN_ERROR:        return "ERROR";
         default:                 return "UNKNOWN";

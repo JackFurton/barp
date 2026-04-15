@@ -11,6 +11,7 @@
 #include "parser.h"
 #include "ast.h"
 #include "codegen.h"
+#include "sema.h"
 
 static char *read_file(const char *path) {
     FILE *file = fopen(path, "rb");
@@ -108,6 +109,13 @@ int main(int argc, char *argv[]) {
         program_free(program);
         free(source);
         return 0;
+    }
+
+    if (!sema_check_program(program)) {
+        fprintf(stderr, "Compilation failed due to semantic errors.\n");
+        program_free(program);
+        free(source);
+        return 1;
     }
 
     // Code generation

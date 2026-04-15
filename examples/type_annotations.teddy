@@ -1,0 +1,11 @@
+// Test parsing of type and effect annotations.
+
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn main() with IO {
+    let answer: int = add(20, 22);
+    print answer;
+    return 0;
+}

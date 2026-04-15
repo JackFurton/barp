@@ -62,11 +62,13 @@ typedef enum {
     TOKEN_FOR,          // for
     TOKEN_IN,           // in
     TOKEN_IMPL,         // impl
+    TOKEN_WITH,         // with
 
     // Two-character tokens (new)
     TOKEN_COLON_COLON,  // ::
     TOKEN_FAT_ARROW,    // =>
     TOKEN_DOT_DOT,      // ..
+    TOKEN_ARROW,        // ->
 
     // Special
     TOKEN_EOF,

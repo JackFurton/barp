@@ -201,6 +201,7 @@ typedef struct {
 
 typedef struct {
     char *name;
+    char *type_name;  // Optional type annotation, NULL if omitted
     Expr *initializer;
 } LetStmt;
 
@@ -279,6 +280,7 @@ struct Stmt {
 typedef struct {
     char *name;
     char **field_names;
+    char **field_types;  // Optional per-field type annotations
     int field_count;
 } StructDef;
 
@@ -286,13 +288,18 @@ typedef struct {
     char *name;
     char **variant_names;
     int *variant_has_data;   // 1 if variant has payload, 0 if not
+    char **variant_payload_types;  // Optional per-variant payload type annotations
     int variant_count;
 } EnumDef;
 
 typedef struct {
     char *name;
     char **params;
+    char **param_types;   // Optional per-parameter type annotations
     Expr **defaults;     // Default value expressions (NULL if no default)
+    char *return_type;   // Optional return type annotation
+    char **effects;      // Optional effect annotations after `with`
+    int effect_count;
     int param_count;
     Stmt *body;  // Block statement
 } Function;
@@ -330,7 +337,7 @@ Expr *expr_string_interp(Expr **parts, int part_count, int line);
 // Statements
 Stmt *stmt_expr(Expr *expr, int line);
 Stmt *stmt_print(Expr *expr, int line);
-Stmt *stmt_let(char *name, Expr *initializer, int line);
+Stmt *stmt_let(char *name, char *type_name, Expr *initializer, int line);
 Stmt *stmt_assign(char *name, Expr *value, int line);
 Stmt *stmt_index_assign(Expr *array, Expr *index, Expr *value, int line);
 Stmt *stmt_field_assign(Expr *object, char *field_name, Expr *value, int line);
@@ -345,13 +352,15 @@ Stmt *stmt_continue(int line);
 Stmt *stmt_destructure(char **field_names, int field_count, Expr *initializer, int line);
 
 // Structs
-StructDef *struct_def_new(char *name, char **field_names, int field_count);
+StructDef *struct_def_new(char *name, char **field_names, char **field_types, int field_count);
 
 // Enums
-EnumDef *enum_def_new(char *name, char **variant_names, int *variant_has_data, int variant_count);
+EnumDef *enum_def_new(char *name, char **variant_names, int *variant_has_data,
+                      char **variant_payload_types, int variant_count);
 
 // Program
-Function *function_new(char *name, char **params, int param_count, Stmt *body);
+Function *function_new(char *name, char **params, char **param_types, int param_count,
+                       char *return_type, char **effects, int effect_count, Stmt *body);
 Program *program_new(void);
 void program_add_struct(Program *prog, StructDef *sd);
 void program_add_enum(Program *prog, EnumDef *ed);

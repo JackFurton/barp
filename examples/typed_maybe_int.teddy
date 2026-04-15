@@ -1,0 +1,17 @@
+// Typed enum payloads flowing through match bindings.
+
+enum MaybeInt {
+    None,
+    Some(value: int)
+}
+
+fn unwrap_or(v: MaybeInt, fallback: int) -> int {
+    return match v {
+        None => fallback,
+        Some(n) => n
+    };
+}
+
+fn main() -> int {
+    return unwrap_or(MaybeInt::Some(5), 0);
+}
