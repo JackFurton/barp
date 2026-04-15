@@ -1,0 +1,16 @@
+// Typed array inference through literals, indexing, and for-in loops.
+
+fn sum(nums) -> int {
+    let total: int = 0;
+    for n in nums {
+        total = total + n;
+    }
+    return total;
+}
+
+fn main() -> int {
+    let nums = [1, 2, 3, 4];
+    let first: int = nums[0];
+    nums[1] = 10;
+    return sum(nums) + first;
+}

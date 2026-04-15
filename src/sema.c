@@ -189,6 +189,11 @@ static Type builtin_return_type(const char *name) {
     return type_void();
 }
 
+static Type array_element_type(Type array_type) {
+    if (array_type.kind != TYPE_ARRAY || !array_type.element) return type_unknown();
+    return *array_type.element;
+}
+
 static Type check_expr(Sema *sema, Expr *expr);
 static void check_stmt(Sema *sema, Stmt *stmt);
 
@@ -345,7 +350,7 @@ static Type check_expr(Sema *sema, Expr *expr) {
                                          "array literal element type");
                 }
             }
-            return type_array();
+            return type_array(element_type);
         }
         case EXPR_VARIABLE: {
             Type *local = find_local(sema, expr->as.variable.name);
@@ -438,7 +443,7 @@ static Type check_expr(Sema *sema, Expr *expr) {
                 sema_error(sema, expr->line, "indexing requires an array, got %s",
                            type_describe(array, array_buf, sizeof(array_buf)));
             }
-            return type_unknown();
+            return array_element_type(array);
         }
         case EXPR_STRUCT_LITERAL: {
             StructDef *sd = find_struct_def(sema, expr->as.struct_literal.struct_name);
@@ -610,15 +615,24 @@ static void check_stmt(Sema *sema, Stmt *stmt) {
             break;
         }
         case STMT_INDEX_ASSIGN:
-            check_expr(sema, stmt->as.index_assign.array);
-            if (check_expr(sema, stmt->as.index_assign.index).kind != TYPE_INT) {
-                Type index = check_expr(sema, stmt->as.index_assign.index);
-                if (index.kind != TYPE_UNKNOWN && index.kind != TYPE_ERROR) {
-                    report_type_mismatch(sema, stmt->line, type_int(), index, "array index");
-                }
+        {
+            Type array = check_expr(sema, stmt->as.index_assign.array);
+            Type index = check_expr(sema, stmt->as.index_assign.index);
+            if (index.kind != TYPE_INT && index.kind != TYPE_UNKNOWN && index.kind != TYPE_ERROR) {
+                report_type_mismatch(sema, stmt->line, type_int(), index, "array index");
             }
-            check_expr(sema, stmt->as.index_assign.value);
+            if (array.kind != TYPE_ARRAY && array.kind != TYPE_UNKNOWN && array.kind != TYPE_ERROR) {
+                char array_buf[64];
+                sema_error(sema, stmt->line, "index assignment requires an array, got %s",
+                           type_describe(array, array_buf, sizeof(array_buf)));
+            }
+            Type value = check_expr(sema, stmt->as.index_assign.value);
+            Type expected = array_element_type(array);
+            if (!types_compatible(expected, value)) {
+                report_type_mismatch(sema, stmt->line, expected, value, "array element assignment");
+            }
             break;
+        }
         case STMT_FIELD_ASSIGN: {
             Type object = check_expr(sema, stmt->as.field_assign.object);
             if (object.kind == TYPE_STRUCT) {
@@ -671,8 +685,14 @@ static void check_stmt(Sema *sema, Stmt *stmt) {
         case STMT_FOR:
             push_scope(sema);
             if (stmt->as.for_stmt.iterable) {
-                check_expr(sema, stmt->as.for_stmt.iterable);
-                add_local(sema, stmt->as.for_stmt.var_name, type_unknown());
+                Type iterable = check_expr(sema, stmt->as.for_stmt.iterable);
+                if (iterable.kind != TYPE_ARRAY && iterable.kind != TYPE_UNKNOWN &&
+                    iterable.kind != TYPE_ERROR) {
+                    char iter_buf[64];
+                    sema_error(sema, stmt->line, "for-in requires an array, got %s",
+                               type_describe(iterable, iter_buf, sizeof(iter_buf)));
+                }
+                add_local(sema, stmt->as.for_stmt.var_name, array_element_type(iterable));
             } else {
                 Type start = check_expr(sema, stmt->as.for_stmt.start);
                 Type end = check_expr(sema, stmt->as.for_stmt.end);

@@ -21,10 +21,13 @@ typedef enum {
     TYPE_FUNCTION,
 } TypeKind;
 
-typedef struct {
+typedef struct Type Type;
+
+struct Type {
     TypeKind kind;
     const char *name;
-} Type;
+    Type *element;
+};
 
 Type type_error(void);
 Type type_unknown(void);
@@ -32,7 +35,7 @@ Type type_void(void);
 Type type_int(void);
 Type type_bool(void);
 Type type_string(void);
-Type type_array(void);
+Type type_array(Type element);
 Type type_struct(const char *name);
 Type type_enum(const char *name);
 Type type_function(const char *name);

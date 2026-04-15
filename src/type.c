@@ -3,62 +3,71 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "type.h"
 
 Type type_error(void) {
-    Type type = { TYPE_ERROR, NULL };
+    Type type = { TYPE_ERROR, NULL, NULL };
     return type;
 }
 
 Type type_unknown(void) {
-    Type type = { TYPE_UNKNOWN, NULL };
+    Type type = { TYPE_UNKNOWN, NULL, NULL };
     return type;
 }
 
 Type type_void(void) {
-    Type type = { TYPE_VOID, NULL };
+    Type type = { TYPE_VOID, NULL, NULL };
     return type;
 }
 
 Type type_int(void) {
-    Type type = { TYPE_INT, NULL };
+    Type type = { TYPE_INT, NULL, NULL };
     return type;
 }
 
 Type type_bool(void) {
-    Type type = { TYPE_BOOL, NULL };
+    Type type = { TYPE_BOOL, NULL, NULL };
     return type;
 }
 
 Type type_string(void) {
-    Type type = { TYPE_STRING, NULL };
+    Type type = { TYPE_STRING, NULL, NULL };
     return type;
 }
 
-Type type_array(void) {
-    Type type = { TYPE_ARRAY, NULL };
+Type type_array(Type element) {
+    Type *element_copy = malloc(sizeof(Type));
+    if (element_copy) {
+        *element_copy = element;
+    }
+    Type type = { TYPE_ARRAY, NULL, element_copy };
     return type;
 }
 
 Type type_struct(const char *name) {
-    Type type = { TYPE_STRUCT, name };
+    Type type = { TYPE_STRUCT, name, NULL };
     return type;
 }
 
 Type type_enum(const char *name) {
-    Type type = { TYPE_ENUM, name };
+    Type type = { TYPE_ENUM, name, NULL };
     return type;
 }
 
 Type type_function(const char *name) {
-    Type type = { TYPE_FUNCTION, name };
+    Type type = { TYPE_FUNCTION, name, NULL };
     return type;
 }
 
 int type_equals(Type left, Type right) {
     if (left.kind != right.kind) return 0;
+    if (left.kind == TYPE_ARRAY) {
+        if (!left.element || !right.element) return left.element == right.element;
+        return type_equals(*left.element, *right.element);
+    }
     if (left.kind == TYPE_STRUCT || left.kind == TYPE_ENUM || left.kind == TYPE_FUNCTION) {
         if (!left.name || !right.name) return left.name == right.name;
         return strcmp(left.name, right.name) == 0;
@@ -89,6 +98,12 @@ const char *type_describe(Type type, char *buffer, size_t buffer_size) {
         case TYPE_STRING:
             return "string";
         case TYPE_ARRAY:
+            if (type.element && buffer && buffer_size > 0) {
+                char inner[64];
+                snprintf(buffer, buffer_size, "%s[]",
+                         type_describe(*type.element, inner, sizeof(inner)));
+                return buffer;
+            }
             return "array";
         case TYPE_STRUCT:
             if (type.name) return type.name;
